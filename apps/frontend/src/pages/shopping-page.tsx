@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { ShoppingList } from "../types";
+import type { ShoppingItem, ShoppingList } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
@@ -68,7 +68,7 @@ export function ShoppingPage() {
   const checkedCount = list?.items.filter((i) => i.checked).length ?? 0;
   const totalCount = list?.items.length ?? 0;
 
-  const grouped = (list?.items ?? []).reduce<Record<string, typeof list.items>>((acc, item) => {
+  const grouped = (list?.items ?? []).reduce<Record<string, ShoppingItem[]>>((acc, item) => {
     const key = item.category ?? "Altro";
     if (!acc[key]) acc[key] = [];
     acc[key].push(item);
