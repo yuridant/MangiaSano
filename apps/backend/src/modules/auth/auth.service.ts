@@ -21,7 +21,7 @@ export class AuthService {
   ) {}
 
   private signToken(userId: string, email: string) {
-    return sign({ sub: userId, email }, this.config.getOrThrow("JWT_SECRET"), {
+    return sign({ sub: userId, email }, this.config.getOrThrow<string>("JWT_SECRET"), {
       expiresIn: ACCESS_TOKEN_TTL
     });
   }
