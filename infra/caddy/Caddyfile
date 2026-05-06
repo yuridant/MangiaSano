@@ -1,0 +1,11 @@
+{$DOMAIN} {
+  encode gzip zstd
+
+  handle /api/* {
+    reverse_proxy mangiasano-backend-prod:3000
+  }
+
+  handle {
+    reverse_proxy mangiasano-frontend-prod:80
+  }
+}

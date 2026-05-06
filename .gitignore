@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+.env
+.env.prod
+coverage
+apps/backend/prisma/dev.db

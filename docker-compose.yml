@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mangiasano-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mangiasano}
+      POSTGRES_USER: ${POSTGRES_USER:-mangiasano}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mangiasano}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mangiasano} -d ${POSTGRES_DB:-mangiasano}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: sh -c "npm install && until nc -z postgres 5432; do echo 'Waiting for postgres...'; sleep 2; done && npm run prisma:generate && npm run prisma:push && npm run start:dev"
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mangiasano}:${POSTGRES_PASSWORD:-mangiasano}@postgres:5432/${POSTGRES_DB:-mangiasano}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      PORT: 3000
+      APP_URL: ${APP_URL:-http://localhost:5174}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5174}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-localhost}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-demo}
+      SMTP_PASS: ${SMTP_PASS:-demo}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@mangiasano.local}
+    volumes:
+      - ./apps/backend:/app
+      - ./tsconfig.base.json:/tsconfig.base.json
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5174"
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+    volumes:
+      - ./apps/frontend:/app
+      - ./tsconfig.base.json:/tsconfig.base.json
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8081:80"
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+
+  prisma-studio:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: sh -c "npm install && until nc -z postgres 5432; do echo 'Waiting for postgres...'; sleep 2; done && npm run prisma:generate && npx prisma studio --hostname 0.0.0.0 --port 5556"
+    ports:
+      - "5556:5556"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mangiasano}:${POSTGRES_PASSWORD:-mangiasano}@postgres:5432/${POSTGRES_DB:-mangiasano}?schema=public
+    volumes:
+      - ./apps/backend:/app
+      - ./tsconfig.base.json:/tsconfig.base.json
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  backend_node_modules:
+  frontend_node_modules:

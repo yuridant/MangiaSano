@@ -1,0 +1,75 @@
+name: mangiasano-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mangiasano-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mangiasano}
+      POSTGRES_USER: ${POSTGRES_USER:-mangiasano}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mangiasano} -d ${POSTGRES_DB:-mangiasano}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - mangiasano_internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile.prod
+    container_name: mangiasano-backend-prod
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mangiasano}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mangiasano}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: 3000
+      APP_URL: ${APP_URL}
+      CORS_ORIGIN: ${APP_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+    expose:
+      - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mangiasano_internal
+      - shared_reverse_proxy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile.prod
+      args:
+        VITE_API_URL: /api
+    container_name: mangiasano-frontend-prod
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "80"
+    networks:
+      - mangiasano_internal
+      - shared_reverse_proxy
+
+volumes:
+  postgres_prod_data:
+    name: mangiasano_postgres_prod_data
+
+networks:
+  mangiasano_internal:
+    name: mangiasano_internal
+  shared_reverse_proxy:
+    external: true
+    name: shared_reverse_proxy

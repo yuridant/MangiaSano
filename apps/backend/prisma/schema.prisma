@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  familyMemberships  FamilyMembership[]
+  refreshTokens      RefreshToken[]
+  createdIngredients Ingredient[] @relation("IngredientCreatedBy")
+  createdRecipes     Recipe[]     @relation("RecipeCreatedBy")
+}
+
+model Family {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  memberships   FamilyMembership[]
+  invitations   FamilyInvitation[]
+  ingredients   Ingredient[]
+  recipes       Recipe[]
+  weeklyMenus   WeeklyMenu[]
+  shoppingLists ShoppingList[]
+}
+
+model FamilyMembership {
+  id       String         @id @default(cuid())
+  userId   String
+  familyId String
+  role     MembershipRole @default(member)
+  joinedAt DateTime       @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, familyId])
+}
+
+model FamilyInvitation {
+  id        String         @id @default(cuid())
+  familyId  String
+  email     String
+  token     String         @unique @default(cuid())
+  role      MembershipRole @default(member)
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+}
+
+model Ingredient {
+  id          String   @id @default(cuid())
+  name        String
+  category    String?
+  familyId    String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("IngredientCreatedBy", fields: [createdById], references: [id])
+
+  recipeIngredients RecipeIngredient[]
+  shoppingItems     ShoppingListItem[]
+
+  @@unique([name, familyId])
+}
+
+model Recipe {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  mealType    MealSlot?
+  familyId    String
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("RecipeCreatedBy", fields: [createdById], references: [id])
+
+  ingredients RecipeIngredient[]
+  menuMeals   MenuMeal[]
+
+  @@unique([name, familyId])
+}
+
+model RecipeIngredient {
+  recipeId     String
+  ingredientId String
+
+  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@id([recipeId, ingredientId])
+}
+
+model WeeklyMenu {
+  id        String   @id @default(cuid())
+  weekStart DateTime
+  familyId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  family        Family         @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  meals         MenuMeal[]
+  shoppingLists ShoppingList[]
+
+  @@unique([weekStart, familyId])
+}
+
+model MenuMeal {
+  id           String   @id @default(cuid())
+  weeklyMenuId String
+  recipeId     String?
+  customName   String?
+  dayOfWeek    Int
+  mealSlot     MealSlot
+
+  weeklyMenu WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+  recipe     Recipe?    @relation(fields: [recipeId], references: [id])
+
+  @@unique([weeklyMenuId, dayOfWeek, mealSlot])
+}
+
+model ShoppingList {
+  id           String   @id @default(cuid())
+  weeklyMenuId String
+  familyId     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  weeklyMenu WeeklyMenu       @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+  family     Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  items      ShoppingListItem[]
+
+  @@unique([weeklyMenuId, familyId])
+}
+
+model ShoppingListItem {
+  id             String  @id @default(cuid())
+  shoppingListId String
+  ingredientId   String?
+  customName     String?
+  checked        Boolean @default(false)
+
+  shoppingList ShoppingList @relation(fields: [shoppingListId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient?  @relation(fields: [ingredientId], references: [id])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum MembershipRole {
+  owner
+  member
+}
+
+enum MealSlot {
+  breakfast
+  lunch
+  dinner
+  snack
+}

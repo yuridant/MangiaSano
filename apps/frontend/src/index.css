@@ -1,0 +1,150 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #0f172a;
+  background:
+    radial-gradient(circle at top left, rgba(74, 124, 89, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(217, 119, 6, 0.10), transparent 26%),
+    linear-gradient(180deg, #fefce8 0%, #f0fdf4 100%);
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button, select {
+  touch-action: manipulation;
+}
+
+input, select, textarea, button, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(74, 124, 89, 0.8);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .app-panel {
+    @apply rounded-[2rem] border border-white/70 bg-white/80 p-6 shadow-panel backdrop-blur;
+  }
+
+  .app-page-header {
+    @apply relative overflow-hidden rounded-[2.25rem] border border-white/70 bg-white/80 p-6 shadow-panel backdrop-blur sm:p-7;
+  }
+
+  .app-subpanel {
+    @apply rounded-3xl bg-white/60 p-4;
+  }
+
+  .app-empty {
+    @apply rounded-3xl bg-white/60 p-5 text-sm text-slate-500;
+  }
+
+  .app-btn {
+    @apply inline-flex min-h-[44px] items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition-colors;
+  }
+
+  .app-btn-sm {
+    @apply inline-flex min-h-[40px] items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold transition-colors shadow-sm;
+  }
+
+  .app-btn-xs {
+    @apply inline-flex min-h-[38px] items-center justify-center rounded-full px-4 py-2 text-xs font-semibold transition-colors shadow-sm;
+  }
+
+  .app-btn-primary {
+    @apply bg-ink text-white hover:bg-slate-800;
+  }
+
+  .app-btn-sage {
+    @apply bg-sage text-white hover:bg-green-800;
+  }
+
+  .app-btn-secondary {
+    @apply border border-slate-200 bg-white/80 text-slate-700 hover:bg-white;
+  }
+
+  .app-btn-danger {
+    @apply border border-rose-200 bg-rose-100 text-rose-700 hover:bg-rose-200;
+  }
+
+  .app-badge {
+    @apply inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700;
+  }
+
+  .app-badge-sage {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .app-badge-wheat {
+    @apply bg-amber-100 text-amber-800;
+  }
+
+  .app-modal-root {
+    @apply fixed inset-0 z-50;
+  }
+
+  .app-modal-backdrop {
+    @apply absolute inset-0 h-full w-full border-0 bg-slate-950/40 p-0 backdrop-blur-sm;
+  }
+
+  .app-modal-shell {
+    @apply absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col overflow-hidden rounded-t-[2rem] border border-white/10 bg-white/95 shadow-2xl backdrop-blur md:left-1/2 md:top-1/2 md:max-h-[88vh] md:w-[calc(100vw-2rem)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem] md:border-white/70;
+    height: min(92vh, 92dvh);
+    max-height: min(92vh, 92dvh);
+  }
+
+  .app-modal-grabber {
+    @apply mx-auto mt-3 h-1.5 w-14 rounded-full bg-slate-300 md:hidden;
+  }
+
+  .app-modal-content {
+    @apply min-h-0 flex-1 overflow-y-auto px-5 pb-5 sm:px-6 sm:pb-6;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-modal-footer {
+    @apply border-t border-slate-200 bg-white/80 px-5 py-4 backdrop-blur sm:px-6;
+  }
+
+  .app-mobile-nav {
+    @apply rounded-[1.9rem] border border-white/85 bg-white/95 p-2 shadow-2xl backdrop-blur-xl;
+    box-shadow:
+      0 26px 60px rgba(15, 23, 42, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+
+  .app-mobile-nav-item {
+    @apply flex min-h-[58px] flex-col items-center justify-center rounded-[1.3rem] px-2 text-center text-xs font-bold leading-none tracking-[0.01em] transition-all duration-150;
+  }
+
+  .app-mobile-nav-item-active {
+    @apply bg-ink text-white shadow-md;
+  }
+
+  .app-mobile-nav-item-inactive {
+    @apply text-slate-700 hover:bg-slate-100/90;
+  }
+
+  .app-soft-divider {
+    @apply border-t border-slate-200/80;
+  }
+}

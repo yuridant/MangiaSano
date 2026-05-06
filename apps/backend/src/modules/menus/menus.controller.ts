@@ -1,0 +1,78 @@
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { MealSlot } from "@prisma/client";
+import { z } from "zod";
+import { AuthGuard } from "../../common/guards/auth.guard";
+import { MenusService } from "./menus.service";
+
+const mealSlotEnum = z.enum(["breakfast", "lunch", "dinner", "snack"] as const);
+
+const upsertMealSchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  mealSlot: mealSlotEnum,
+  recipeId: z.string().optional(),
+  customName: z.string().optional()
+});
+
+const bulkSaveSchema = z.object({
+  meals: z.array(
+    z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      mealSlot: mealSlotEnum,
+      recipeId: z.string()
+    })
+  )
+});
+
+type AuthedRequest = { user: { id: string } };
+
+@Controller("menus")
+@UseGuards(AuthGuard)
+export class MenusController {
+  constructor(private readonly menusService: MenusService) {}
+
+  @Get()
+  listWeeks(@Req() req: AuthedRequest, @Query("familyId") familyId: string) {
+    return this.menusService.listWeeks(req.user.id, familyId);
+  }
+
+  @Get(":weekStart")
+  getWeek(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("weekStart") weekStart: string
+  ) {
+    return this.menusService.getWeek(req.user.id, familyId, weekStart);
+  }
+
+  @Post(":weekStart/meals")
+  upsertMeal(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("weekStart") weekStart: string,
+    @Body() body: unknown
+  ) {
+    const data = upsertMealSchema.parse(body);
+    return this.menusService.upsertMeal(req.user.id, familyId, weekStart, data as { dayOfWeek: number; mealSlot: MealSlot });
+  }
+
+  @Put(":weekStart/meals")
+  bulkSaveMeals(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("weekStart") weekStart: string,
+    @Body() body: unknown
+  ) {
+    const { meals } = bulkSaveSchema.parse(body);
+    return this.menusService.bulkSaveMeals(req.user.id, familyId, weekStart, meals as { dayOfWeek: number; mealSlot: MealSlot; recipeId: string }[]);
+  }
+
+  @Delete(":weekStart/meals/:mealId")
+  removeMeal(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("weekStart") weekStart: string,
+    @Param("mealId") mealId: string
+  ) {
+    return this.menusService.removeMeal(req.user.id, familyId, weekStart, mealId);
+  }
+}
