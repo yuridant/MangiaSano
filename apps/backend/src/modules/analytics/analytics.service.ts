@@ -169,7 +169,15 @@ export class AnalyticsService {
       }
     }
 
-    const experimentBreakdown = [...variantBuckets.entries()].map(([variant, entries]) => ({
+    const experimentBreakdown = [...variantBuckets.entries()].map(([variant, entries]) => {
+      const feedbackEntries = entries.filter((entry) => Boolean(entry.feedbackRating));
+      const positiveFeedbackCount = feedbackEntries.filter(
+        (entry) => entry.feedbackRating === "excellent" || entry.feedbackRating === "acceptable"
+      ).length;
+      const poorFeedbackCount = feedbackEntries.filter((entry) => entry.feedbackRating === "poor").length;
+      const savedCount = entries.filter((entry) => Boolean(entry.savedToMenuAt)).length;
+
+      return ({
       variant,
       requests: entries.length,
       averageCostUsd: Number(
@@ -185,8 +193,15 @@ export class AnalyticsService {
       ),
       averageOutputTokens: Math.round(
         entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
-      )
-    }));
+      ),
+      feedbackCount: feedbackEntries.length,
+      positiveFeedbackRatePct:
+        feedbackEntries.length > 0 ? Math.round((positiveFeedbackCount / feedbackEntries.length) * 100) : null,
+      poorFeedbackRatePct:
+        feedbackEntries.length > 0 ? Math.round((poorFeedbackCount / feedbackEntries.length) * 100) : null,
+      savedRatePct: entries.length > 0 ? Math.round((savedCount / entries.length) * 100) : null
+    });
+    });
 
     return {
       totalRequests: logs.length,
@@ -246,6 +261,8 @@ export class AnalyticsService {
         totalTokens: log.totalTokens ?? 0,
         estimatedTotalCostUsd: log.estimatedTotalCostUsd ?? 0,
         latencyMs: log.latencyMs ?? 0,
+        feedbackRating: log.feedbackRating,
+        savedToMenu: Boolean(log.savedToMenuAt),
         requestBreakdown: log.requestBreakdown,
         errorMessage: log.errorMessage
       }))
@@ -269,6 +286,10 @@ export class AnalyticsService {
       averageRequestedMeals: number;
       averageInputTokens: number;
       averageOutputTokens: number;
+      feedbackCount: number;
+      positiveFeedbackRatePct: number | null;
+      poorFeedbackRatePct: number | null;
+      savedRatePct: number | null;
     }[]
   ) {
     const groupA = experimentBreakdown.find((entry) => entry.variant === "primary");
@@ -281,6 +302,8 @@ export class AnalyticsService {
         recommendation: "Continua il test finché entrambi i gruppi hanno abbastanza richieste.",
         costDeltaPct: null,
         costPerMealDeltaPct: null,
+        positiveFeedbackGap: null,
+        poorFeedbackGap: null,
         requestedMealsGap: null,
         sampleSizeOk: false
       } as const;
@@ -298,6 +321,14 @@ export class AnalyticsService {
       averageCostPerMealA > 0
         ? Number((((averageCostPerMealB - averageCostPerMealA) / averageCostPerMealA) * 100).toFixed(1))
         : null;
+    const positiveFeedbackGap =
+      groupA.positiveFeedbackRatePct !== null && groupB.positiveFeedbackRatePct !== null
+        ? groupB.positiveFeedbackRatePct - groupA.positiveFeedbackRatePct
+        : null;
+    const poorFeedbackGap =
+      groupA.poorFeedbackRatePct !== null && groupB.poorFeedbackRatePct !== null
+        ? groupB.poorFeedbackRatePct - groupA.poorFeedbackRatePct
+        : null;
     const requestedMealsGap = Number(
       Math.abs(groupA.averageRequestedMeals - groupB.averageRequestedMeals).toFixed(1)
     );
@@ -305,6 +336,7 @@ export class AnalyticsService {
     const enoughSamples = groupA.requests >= 10 && groupB.requests >= 10;
     const comparableMealLoad = requestedMealsGap <= 1.5;
     const sampleSizeOk = balancedSamples && enoughSamples && comparableMealLoad;
+    const enoughQualitySignals = groupA.feedbackCount >= 5 && groupB.feedbackCount >= 5;
 
     if (!sampleSizeOk) {
       return {
@@ -314,6 +346,27 @@ export class AnalyticsService {
           "Raccogli almeno 10 richieste riuscite per gruppo con carico pasti simile prima di decidere un modello definitivo.",
         costDeltaPct,
         costPerMealDeltaPct,
+        positiveFeedbackGap,
+        poorFeedbackGap,
+        requestedMealsGap,
+        sampleSizeOk
+      } as const;
+    }
+
+    if (
+      enoughQualitySignals &&
+      (costPerMealDeltaPct ?? 0) <= -15 &&
+      ((poorFeedbackGap ?? 0) > 10 || (positiveFeedbackGap ?? 0) < -15)
+    ) {
+      return {
+        status: "watch",
+        summary: "Il gruppo B costa meno, ma i feedback segnalano una possibile perdita di qualità.",
+        recommendation:
+          "Continua il test o mantieni A come default finché il vantaggio economico di B non resta compatibile con la qualità percepita.",
+        costDeltaPct,
+        costPerMealDeltaPct,
+        positiveFeedbackGap,
+        poorFeedbackGap,
         requestedMealsGap,
         sampleSizeOk
       } as const;
@@ -326,6 +379,8 @@ export class AnalyticsService {
         recommendation: "Puoi considerare il modello B come nuovo default, tenendo monitorata la qualità percepita.",
         costDeltaPct,
         costPerMealDeltaPct,
+        positiveFeedbackGap,
+        poorFeedbackGap,
         requestedMealsGap,
         sampleSizeOk
       } as const;
@@ -338,6 +393,8 @@ export class AnalyticsService {
         recommendation: "Mantieni il modello A come default e usa il B solo se porta un vantaggio qualitativo evidente.",
         costDeltaPct,
         costPerMealDeltaPct,
+        positiveFeedbackGap,
+        poorFeedbackGap,
         requestedMealsGap,
         sampleSizeOk
       } as const;
@@ -350,6 +407,8 @@ export class AnalyticsService {
         "Scegli in base alla qualità percepita oppure continua il test per aumentare la confidenza statistica.",
       costDeltaPct,
       costPerMealDeltaPct,
+      positiveFeedbackGap,
+      poorFeedbackGap,
       requestedMealsGap,
       sampleSizeOk
     } as const;

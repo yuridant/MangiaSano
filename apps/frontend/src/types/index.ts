@@ -115,6 +115,16 @@ export interface AiResponse {
   newIngredients: { name: string; category?: string }[];
 }
 
+export type AiFeedbackRating = "excellent" | "acceptable" | "poor";
+
+export interface AiGenerateResult {
+  generationId: string | null;
+  model: string;
+  experimentVariant: "primary" | "secondary";
+  experimentStrategy: "off" | "alternate" | "random";
+  result: AiResponse;
+}
+
 export interface AnalyticsSummary {
   overview: {
     totalMenus: number;
@@ -156,6 +166,10 @@ export interface AnalyticsSummary {
       averageRequestedMeals: number;
       averageInputTokens: number;
       averageOutputTokens: number;
+      feedbackCount: number;
+      positiveFeedbackRatePct: number | null;
+      poorFeedbackRatePct: number | null;
+      savedRatePct: number | null;
     }[];
     experimentVerdict: {
       status: "insufficient_data" | "watch" | "winner_a" | "winner_b" | "close";
@@ -163,6 +177,8 @@ export interface AnalyticsSummary {
       recommendation: string;
       costDeltaPct: number | null;
       costPerMealDeltaPct: number | null;
+      positiveFeedbackGap: number | null;
+      poorFeedbackGap: number | null;
       requestedMealsGap: number | null;
       sampleSizeOk: boolean;
     };
@@ -187,6 +203,8 @@ export interface AnalyticsSummary {
       totalTokens: number;
       estimatedTotalCostUsd: number;
       latencyMs: number;
+      feedbackRating: AiFeedbackRating | null;
+      savedToMenu: boolean;
       requestBreakdown: unknown;
       errorMessage: string | null;
     }[];

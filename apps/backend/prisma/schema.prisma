@@ -59,6 +59,9 @@ model AiGenerationLog {
   latencyMs             Int?
   openaiResponseId      String?
   errorMessage          String?
+  feedbackRating        String?
+  feedbackAt            DateTime?
+  savedToMenuAt         DateTime?
   requestBreakdown      Json?
   responseBreakdown     Json?
   createdAt             DateTime @default(now())

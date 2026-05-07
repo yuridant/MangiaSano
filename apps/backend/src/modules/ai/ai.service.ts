@@ -46,6 +46,15 @@ export const aiResponseSchema = z.object({
 });
 
 export type AiResponse = z.infer<typeof aiResponseSchema>;
+export type AiFeedbackRating = "excellent" | "acceptable" | "poor";
+
+export interface AiGenerateResult {
+  generationId: string | null;
+  model: string;
+  experimentVariant: "primary" | "secondary";
+  experimentStrategy: OpenAiExperimentMode;
+  result: AiResponse;
+}
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06";
 const MODEL_PRICING_USD_PER_1M: Record<string, { input: number; cachedInput: number; output: number }> = {
@@ -114,9 +123,10 @@ export class AiService {
   async generate(
     userId: string,
     familyId: string,
+    weekStart: string,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     goal: string
-  ): Promise<AiResponse> {
+  ): Promise<AiGenerateResult> {
     await this.families.requireMembership(userId, familyId);
     const startedAt = Date.now();
 
@@ -226,9 +236,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         slots,
         { requireCompleteCoverage: true }
       );
-      await this.logGeneration({
+      const generationId = await this.logGeneration({
         userId,
         familyId,
+        weekStart,
         model,
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
@@ -246,11 +257,18 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         latencyMs: Date.now() - startedAt,
         openaiResponseId: response.id
       });
-      return validated;
+      return {
+        generationId,
+        model,
+        experimentVariant: modelSelection.variant,
+        experimentStrategy: modelSelection.strategy,
+        result: validated
+      };
     } catch (error) {
       await this.logGeneration({
         userId,
         familyId,
+        weekStart,
         model,
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
@@ -296,6 +314,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     userId: string,
     familyId: string,
     weekStart: string,
+    generationId: string | undefined,
     selectedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
     response: AiResponse
   ) {
@@ -374,7 +393,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const savedMenu = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const ingredientIdsByName = new Map(
         [...existingIngredientsByName.entries()].map(([name, ingredient]) => [name, ingredient.id])
       );
@@ -506,6 +525,36 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         }
       });
     });
+
+    if (generationId) {
+      await this.prisma.aiGenerationLog.updateMany({
+        where: { id: generationId, userId, familyId },
+        data: {
+          savedToMenuAt: new Date()
+        }
+      });
+    }
+
+    return savedMenu;
+  }
+
+  async saveGenerationFeedback(
+    userId: string,
+    familyId: string,
+    generationId: string,
+    rating: AiFeedbackRating
+  ) {
+    await this.families.requireMembership(userId, familyId);
+
+    await this.prisma.aiGenerationLog.updateMany({
+      where: { id: generationId, userId, familyId },
+      data: {
+        feedbackRating: rating,
+        feedbackAt: new Date()
+      }
+    });
+
+    return { ok: true };
   }
 
   private getClient() {
@@ -602,6 +651,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
   private async logGeneration(params: {
     userId: string;
     familyId: string;
+    weekStart: string;
     model: string;
     strategy: OpenAiExperimentMode;
     variant: "primary" | "secondary";
@@ -615,7 +665,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     latencyMs: number;
     openaiResponseId?: string;
     errorMessage?: string;
-  }) {
+  }): Promise<string | null> {
     try {
       const pricing = this.getPricingForModel(params.model);
       const usage = params.usage;
@@ -634,10 +684,11 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           ? null
           : Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6));
 
-      await this.prisma.aiGenerationLog.create({
+      const createdLog = await this.prisma.aiGenerationLog.create({
         data: {
           userId: params.userId,
           familyId: params.familyId,
+          weekStart: this.parseWeekStart(params.weekStart),
           model: params.model,
           success: params.success,
           requestedMealCount: params.requestedMealCount,
@@ -663,14 +714,17 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           responseBreakdown: params.responseBreakdown
             ? (params.responseBreakdown as unknown as Prisma.InputJsonValue)
             : undefined
-        }
+        },
+        select: { id: true }
       });
+      return createdLog.id;
     } catch (loggingError) {
       this.logger.warn(
         `Impossibile salvare il log AI: ${
           loggingError instanceof Error ? loggingError.message : "errore sconosciuto"
         }`
       );
+      return null;
     }
   }
 

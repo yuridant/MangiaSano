@@ -4,7 +4,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot, WeeklyMenu } from "../types";
+import type {
+  AiFeedbackRating,
+  AiGenerateResult,
+  AiMealPlan,
+  AiResponse,
+  FamilyDetail,
+  MealSlot,
+  MenuMeal,
+  WeeklyMenu
+} from "../types";
 import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
@@ -53,11 +62,19 @@ export function GeneratePage() {
 
   const [selectedSlots, setSelectedSlots] = useState<SelectedSlot[]>([]);
   const [aiResult, setAiResult] = useState<AiResponse | null>(null);
+  const [generationMeta, setGenerationMeta] = useState<{
+    generationId: string | null;
+    model: string;
+    experimentVariant: "primary" | "secondary";
+    experimentStrategy: "off" | "alternate" | "random";
+  } | null>(null);
   const [planToSave, setPlanToSave] = useState<AiMealPlan[]>([]);
   const [goal, setGoal] = useState("Piano equilibrato con riduzione picchi glicemici");
   const [error, setError] = useState("");
   const [step, setStep] = useState<"select" | "preview">("select");
   const [overwriteWarningOpen, setOverwriteWarningOpen] = useState(false);
+  const [selectedFeedback, setSelectedFeedback] = useState<AiFeedbackRating | null>(null);
+  const [submittedFeedback, setSubmittedFeedback] = useState<AiFeedbackRating | null>(null);
 
   const requestedWeekStart = searchParams.get("weekStart");
   const parsedWeekStart =
@@ -79,11 +96,14 @@ export function GeneratePage() {
 
   useEffect(() => {
     setAiResult(null);
+    setGenerationMeta(null);
     setPlanToSave([]);
     setSelectedSlots([]);
     setError("");
     setStep("select");
     setOverwriteWarningOpen(false);
+    setSelectedFeedback(null);
+    setSubmittedFeedback(null);
   }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
@@ -180,17 +200,26 @@ export function GeneratePage() {
 
   const generateMutation = useMutation({
     mutationFn: () =>
-      api.post<AiResponse>(
+      api.post<AiGenerateResult>(
         `/ai/generate?familyId=${activeFamilyId}`,
         {
+          weekStart,
           slots: selectedSlots,
           goal
         },
         token!
       ),
     onSuccess: (data) => {
-      setAiResult(data);
-      setPlanToSave(sortMealPlans(data.weeklyPlan));
+      setAiResult(data.result);
+      setGenerationMeta({
+        generationId: data.generationId,
+        model: data.model,
+        experimentVariant: data.experimentVariant,
+        experimentStrategy: data.experimentStrategy
+      });
+      setPlanToSave(sortMealPlans(data.result.weeklyPlan));
+      setSelectedFeedback(null);
+      setSubmittedFeedback(null);
       setStep("preview");
     },
     onError: (err) => {
@@ -205,6 +234,7 @@ export function GeneratePage() {
         `/ai/apply?familyId=${activeFamilyId}`,
         {
           weekStart,
+          generationId: generationMeta?.generationId ?? undefined,
           selectedSlots,
           aiResult: {
             ...aiResult,
@@ -223,11 +253,44 @@ export function GeneratePage() {
     }
   });
 
-  const removeMeal = (dayOfWeek: number, mealSlot: MealSlot) => {
-    setPlanToSave((prev) =>
-      sortMealPlans(prev.filter((m) => !(m.dayOfWeek === dayOfWeek && m.mealSlot === mealSlot)))
-    );
-  };
+  const feedbackMutation = useMutation({
+    mutationFn: (rating: AiFeedbackRating) =>
+      api.post(
+        `/ai/feedback?familyId=${activeFamilyId}`,
+        {
+          generationId: generationMeta?.generationId,
+          rating
+        },
+        token!
+      ),
+    onSuccess: (_, rating) => {
+      setSubmittedFeedback(rating);
+      setError("");
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Errore durante il salvataggio del feedback");
+    }
+  });
+
+  const previewMeals: MenuMeal[] = planToSave.map((meal) => ({
+    id: `${meal.dayOfWeek}-${meal.mealSlot}`,
+    dayOfWeek: meal.dayOfWeek,
+    mealSlot: meal.mealSlot,
+    recipeId: meal.recipeId ?? null,
+    customName: meal.recipeName,
+    recipe: meal.recipeId
+      ? ({
+          id: meal.recipeId,
+          name: meal.recipeName,
+          description: meal.recipeDescription ?? null,
+          mealTypes: [meal.mealSlot],
+          familyId: activeFamilyId ?? "",
+          createdAt: "",
+          updatedAt: "",
+          ingredients: []
+        } as MenuMeal["recipe"])
+      : null
+  }));
 
   if (step === "preview" && aiResult) {
     return (
@@ -235,58 +298,89 @@ export function GeneratePage() {
         <div className="app-page-header">
           <h1 className="text-2xl font-bold text-ink">Piano proposto dall'AI</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Rimuovi i pasti che non ti convincono, poi conferma il menu della settimana selezionata.
+            Valuta la proposta direttamente sulla griglia settimanale, lascia il tuo feedback e poi salva il menu.
           </p>
         </div>
 
-        {aiResult.newIngredients.length > 0 && (
-          <div className="app-panel">
-            <h3 className="mb-3 text-sm font-bold text-ink">
-              Nuovi ingredienti ({aiResult.newIngredients.length})
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {aiResult.newIngredients.map((i) => (
-                <span key={i.name} className="app-badge app-badge-sage">
-                  {i.name}
-                  {i.category && <span className="ml-1 text-green-600/60">· {i.category}</span>}
-                </span>
-              ))}
+        <div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-ink">Anteprima settimanale AI</h3>
+              <p className="mt-1 text-xs text-slate-500">{formatWeekRange(weekStart)}</p>
             </div>
-          </div>
-        )}
-
-        <div className="app-panel">
-          <h3 className="mb-3 text-sm font-bold text-ink">Piano pasti</h3>
-          <div className="flex flex-col gap-2">
-            {planToSave.map((meal) => (
-              <div
-                key={`${meal.dayOfWeek}-${meal.mealSlot}`}
-                className="flex items-center justify-between rounded-2xl bg-sage/8 px-4 py-3"
-              >
-                <div>
-                  <p className="text-xs font-semibold text-slate-400">
-                    {DAYS_FULL[meal.dayOfWeek]} · {SLOT_LABELS[meal.mealSlot]}
-                  </p>
-                  <p className="font-semibold text-ink">{meal.recipeName}</p>
-                  {meal.recipeDescription && (
-                    <p className="text-xs text-slate-500">{meal.recipeDescription}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => removeMeal(meal.dayOfWeek, meal.mealSlot)}
-                  className="ml-3 shrink-0 text-xs text-rose-400 hover:text-rose-600"
-                  type="button"
-                >
-                  Rimuovi
-                </button>
+            {generationMeta && (
+              <div className="rounded-2xl bg-slate-50 px-3 py-2 text-right">
+                <p className="text-[11px] uppercase tracking-wider text-slate-400">
+                  {generationMeta.experimentStrategy === "off"
+                    ? "Modello"
+                    : `Gruppo ${generationMeta.experimentVariant === "secondary" ? "B" : "A"}`}
+                </p>
+                <p className="text-sm font-semibold text-ink">{generationMeta.model}</p>
               </div>
-            ))}
-            {planToSave.length === 0 && (
-              <p className="text-sm text-slate-400">
-                Nessun pasto rimasto nel piano. Aggiungi almeno un pasto per poter salvare il menu.
-              </p>
             )}
           </div>
+          <WeekGrid meals={previewMeals} weekStart={weekStart} />
+        </div>
+
+        <div className="app-panel">
+          <h3 className="mb-3 text-sm font-bold text-ink">Com&apos;è questa proposta?</h3>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              {
+                rating: "excellent" as const,
+                title: "Ottima",
+                description: "La proposta è convincente e pronta da salvare."
+              },
+              {
+                rating: "acceptable" as const,
+                title: "Accettabile",
+                description: "Va bene, anche se non è perfetta."
+              },
+              {
+                rating: "poor" as const,
+                title: "Da rifare",
+                description: "Qualità insufficiente, meglio rigenerare."
+              }
+            ].map((option) => {
+              const isActive = (submittedFeedback ?? selectedFeedback) === option.rating;
+              return (
+                <button
+                  key={option.rating}
+                  type="button"
+                  disabled={feedbackMutation.isPending}
+                  onClick={() => {
+                    setSelectedFeedback(option.rating);
+                    if (generationMeta?.generationId) {
+                      feedbackMutation.mutate(option.rating);
+                    } else {
+                      setSubmittedFeedback(option.rating);
+                    }
+                  }}
+                  className={`rounded-3xl border px-4 py-4 text-left transition ${
+                    isActive
+                      ? "border-sage bg-sage/12 shadow-[0_10px_24px_rgba(85,139,103,0.12)]"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <p className="text-sm font-semibold text-ink">{option.title}</p>
+                  <p className="mt-1 text-sm text-slate-500">{option.description}</p>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Questo feedback viene registrato per confrontare la qualità dei modelli A/B nel tempo.
+          </p>
+          {submittedFeedback && (
+            <p className="mt-2 rounded-2xl bg-sage/10 px-4 py-3 text-sm text-sage">
+              Feedback registrato:{" "}
+              {submittedFeedback === "excellent"
+                ? "Ottima"
+                : submittedFeedback === "acceptable"
+                  ? "Accettabile"
+                  : "Da rifare"}.
+            </p>
+          )}
         </div>
 
         {error && (
@@ -295,7 +389,13 @@ export function GeneratePage() {
 
         <div className="flex gap-3">
           <button
-            onClick={() => { setStep("select"); setAiResult(null); }}
+            onClick={() => {
+              setStep("select");
+              setAiResult(null);
+              setGenerationMeta(null);
+              setSelectedFeedback(null);
+              setSubmittedFeedback(null);
+            }}
             className="app-btn app-btn-secondary flex-1"
             type="button"
           >
@@ -303,7 +403,11 @@ export function GeneratePage() {
           </button>
           <button
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || planToSave.length === 0}
+            disabled={
+              saveMutation.isPending ||
+              planToSave.length === 0 ||
+              (!submittedFeedback && Boolean(generationMeta?.generationId))
+            }
             className="app-btn app-btn-sage flex-1 disabled:opacity-60"
             type="button"
           >

@@ -324,6 +324,20 @@ export function AnalyticsPage() {
                   </p>
                 </div>
               </div>
+              <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-2xl bg-white/80 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta feedback positivi B vs A</p>
+                  <p className="mt-1 font-semibold text-ink">
+                    {formatSignedPercent(data.aiUsage.experimentVerdict.positiveFeedbackGap)}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white/80 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta feedback scarsi B vs A</p>
+                  <p className="mt-1 font-semibold text-ink">
+                    {formatSignedPercent(data.aiUsage.experimentVerdict.poorFeedbackGap)}
+                  </p>
+                </div>
+              </div>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {data.aiUsage.experimentBreakdown.map((item) => (
@@ -348,6 +362,24 @@ export function AnalyticsPage() {
                     <div>
                       <p className="text-xs uppercase tracking-wider text-slate-400">Output medio</p>
                       <p className="mt-1 font-semibold text-ink">{item.averageOutputTokens}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">{item.feedbackCount}</p>
+                      <p className="text-[11px] text-slate-400">Feedback</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">
+                        {item.positiveFeedbackRatePct ?? "n/d"}{item.positiveFeedbackRatePct !== null ? "%" : ""}
+                      </p>
+                      <p className="text-[11px] text-slate-400">Positivi</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">
+                        {item.savedRatePct ?? "n/d"}{item.savedRatePct !== null ? "%" : ""}
+                      </p>
+                      <p className="text-[11px] text-slate-400">Salvati</p>
                     </div>
                   </div>
                 </div>
@@ -384,6 +416,7 @@ export function AnalyticsPage() {
                     <th className="px-3 py-2 font-semibold">Gruppo</th>
                     <th className="px-3 py-2 font-semibold">Modello</th>
                     <th className="px-3 py-2 font-semibold">Pasti</th>
+                    <th className="px-3 py-2 font-semibold">Feedback</th>
                     <th className="px-3 py-2 font-semibold">Input</th>
                     <th className="px-3 py-2 font-semibold">Output</th>
                     <th className="px-3 py-2 font-semibold">Costo</th>
@@ -408,6 +441,15 @@ export function AnalyticsPage() {
                       </td>
                       <td className="px-3 py-3 font-medium text-ink">{request.model}</td>
                       <td className="px-3 py-3 text-slate-600">{request.requestedMealCount}</td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {request.feedbackRating === "excellent"
+                          ? "Ottima"
+                          : request.feedbackRating === "acceptable"
+                            ? "Accettabile"
+                            : request.feedbackRating === "poor"
+                              ? "Da rifare"
+                              : "—"}
+                      </td>
                       <td className="px-3 py-3 text-slate-600">
                         {request.inputTokens}
                         {request.cachedInputTokens > 0 && (

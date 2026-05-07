@@ -6,6 +6,7 @@ import { AiService } from "./ai.service";
 import { aiResponseSchema } from "./ai.service";
 
 const generateSchema = z.object({
+  weekStart: z.string().min(1),
   slots: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
@@ -17,6 +18,7 @@ const generateSchema = z.object({
 
 const applySchema = z.object({
   weekStart: z.string().min(1),
+  generationId: z.string().optional(),
   selectedSlots: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
@@ -28,6 +30,11 @@ const applySchema = z.object({
   })
 });
 
+const feedbackSchema = z.object({
+  generationId: z.string().min(1),
+  rating: z.enum(["excellent", "acceptable", "poor"])
+});
+
 type AuthedRequest = { user: { id: string } };
 
 @Controller("ai")
@@ -37,13 +44,19 @@ export class AiController {
 
   @Post("generate")
   generate(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
-    const { slots, goal } = generateSchema.parse(body);
-    return this.aiService.generate(req.user.id, familyId, slots, goal);
+    const { weekStart, slots, goal } = generateSchema.parse(body);
+    return this.aiService.generate(req.user.id, familyId, weekStart, slots, goal);
   }
 
   @Post("apply")
   apply(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
-    const { weekStart, selectedSlots, aiResult } = applySchema.parse(body);
-    return this.aiService.applyGeneratedPlan(req.user.id, familyId, weekStart, selectedSlots, aiResult);
+    const { weekStart, generationId, selectedSlots, aiResult } = applySchema.parse(body);
+    return this.aiService.applyGeneratedPlan(req.user.id, familyId, weekStart, generationId, selectedSlots, aiResult);
+  }
+
+  @Post("feedback")
+  feedback(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
+    const { generationId, rating } = feedbackSchema.parse(body);
+    return this.aiService.saveGenerationFeedback(req.user.id, familyId, generationId, rating);
   }
 }
