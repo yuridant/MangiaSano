@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { FamiliesService } from "./families.service";
 
+const createFamilySchema = z.object({ name: z.string().min(2) });
 const updateNameSchema = z.object({ name: z.string().min(2) });
 const inviteSchema = z.object({ email: z.string().email() });
 
@@ -12,6 +13,12 @@ type AuthedRequest = { user: { id: string } };
 @UseGuards(AuthGuard)
 export class FamiliesController {
   constructor(private readonly familiesService: FamiliesService) {}
+
+  @Post()
+  createFamily(@Req() req: AuthedRequest, @Body() body: unknown) {
+    const { name } = createFamilySchema.parse(body);
+    return this.familiesService.createFamily(req.user.id, name);
+  }
 
   @Get(":familyId")
   getFamily(@Req() req: AuthedRequest, @Param("familyId") familyId: string) {

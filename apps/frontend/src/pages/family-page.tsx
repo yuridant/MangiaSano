@@ -5,7 +5,7 @@ import { useAuth } from "../lib/auth";
 import type { Family, FamilyDetail } from "../types";
 
 export function FamilyPage() {
-  const { token, activeFamilyId, user } = useAuth();
+  const { token, activeFamilyId, user, refreshSession } = useAuth();
   const queryClient = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteError, setInviteError] = useState("");
@@ -13,6 +13,8 @@ export function FamilyPage() {
   const [editingName, setEditingName] = useState(false);
   const [familyName, setFamilyName] = useState("");
   const [nameError, setNameError] = useState("");
+  const [newFamilyName, setNewFamilyName] = useState("");
+  const [createError, setCreateError] = useState("");
 
   const familyQuery = useQuery({
     queryKey: ["family", activeFamilyId],
@@ -59,6 +61,16 @@ export function FamilyPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["family", activeFamilyId] })
   });
 
+  const createFamilyMutation = useMutation({
+    mutationFn: (name: string) => api.post<Family>("/families", { name }, token!),
+    onSuccess: async () => {
+      await refreshSession();
+      setNewFamilyName("");
+      setCreateError("");
+    },
+    onError: (err) => setCreateError(err instanceof Error ? err.message : "Errore")
+  });
+
   const family = familyQuery.data;
   const currentMember = family?.members.find((m) => m.email === user?.email);
   const isOwner = currentMember?.role === "owner";
@@ -68,6 +80,46 @@ export function FamilyPage() {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-sage border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!activeFamilyId) {
+    return (
+      <div className="flex flex-col gap-5">
+        <div className="app-page-header">
+          <h1 className="text-2xl font-bold text-ink">Famiglia</h1>
+        </div>
+        <div className="app-panel">
+          <h2 className="mb-2 font-bold text-ink">Crea la tua famiglia</h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Non sei ancora associato a nessuna famiglia. Creane una per iniziare.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              createFamilyMutation.mutate(newFamilyName);
+            }}
+            className="flex flex-col gap-3"
+          >
+            <input
+              type="text"
+              value={newFamilyName}
+              onChange={(e) => setNewFamilyName(e.target.value)}
+              required
+              placeholder="Nome famiglia (es. Famiglia Rossi)"
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+            />
+            {createError && <p className="text-sm text-rose-600">{createError}</p>}
+            <button
+              type="submit"
+              disabled={createFamilyMutation.isPending}
+              className="app-btn-sm app-btn-sage disabled:opacity-60"
+            >
+              {createFamilyMutation.isPending ? "Creazione..." : "Crea famiglia"}
+            </button>
+          </form>
+        </div>
       </div>
     );
   }

@@ -17,6 +17,17 @@ export class FamiliesService {
     private readonly config: ConfigService
   ) {}
 
+  async createFamily(userId: string, name: string) {
+    const family = await this.prisma.family.create({
+      data: {
+        name,
+        memberships: { create: { userId, role: "owner" } }
+      },
+      select: { id: true, name: true }
+    });
+    return family;
+  }
+
   async getFamily(userId: string, familyId: string) {
     await this.requireMembership(userId, familyId);
 
