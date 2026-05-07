@@ -16,6 +16,13 @@ function getMonday(date: Date) {
   return d;
 }
 
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatWeekRange(weekStart: string) {
   const start = new Date(weekStart + "T00:00:00");
   const end = new Date(start.getTime() + 6 * 86400000);
@@ -32,7 +39,7 @@ export function MenuPage() {
       ? new Date(requestedWeekStart + "T00:00:00")
       : getMonday(new Date());
   const currentWeek = getMonday(parsedWeek);
-  const weekStart = currentWeek.toISOString().split("T")[0];
+  const weekStart = formatDateKey(currentWeek);
   const [dayOfWeek, setDayOfWeek] = useState(0);
   const [mealSlot, setMealSlot] = useState<MealSlot>("lunch");
   const [mode, setMode] = useState<"recipe" | "custom">("recipe");
@@ -121,20 +128,24 @@ export function MenuPage() {
   });
 
   const setWeek = (date: Date) => {
-    const nextWeekStart = getMonday(date).toISOString().split("T")[0];
+    const nextWeekStart = formatDateKey(getMonday(date));
     setSearchParams({ weekStart: nextWeekStart });
   };
 
   const prevWeek = () => {
-    setWeek(new Date(currentWeek.getTime() - 7 * 86400000));
+    const next = new Date(currentWeek);
+    next.setDate(next.getDate() - 7);
+    setWeek(next);
   };
 
   const nextWeek = () => {
-    setWeek(new Date(currentWeek.getTime() + 7 * 86400000));
+    const next = new Date(currentWeek);
+    next.setDate(next.getDate() + 7);
+    setWeek(next);
   };
 
   const isCurrentWeek =
-    getMonday(new Date()).toISOString().split("T")[0] === weekStart;
+    formatDateKey(getMonday(new Date())) === weekStart;
   const meals = menuQuery.data?.meals ?? [];
   const recipeOptions = recipesQuery.data ?? [];
 

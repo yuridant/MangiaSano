@@ -16,6 +16,13 @@ function getMonday(date: Date) {
   return d;
 }
 
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T00:00:00`);
   const end = new Date(start.getTime() + 6 * 86400000);
@@ -58,7 +65,7 @@ export function GeneratePage() {
       ? new Date(requestedWeekStart + "T00:00:00")
       : getMonday(new Date());
   const currentWeek = getMonday(parsedWeekStart);
-  const weekStart = currentWeek.toISOString().split("T")[0];
+  const weekStart = formatDateKey(currentWeek);
   const familyQuery = useQuery({
     queryKey: ["family", activeFamilyId],
     queryFn: () => api.get<FamilyDetail>(`/families/${activeFamilyId}`, token!),
@@ -134,19 +141,23 @@ export function GeneratePage() {
     DAYS_FULL.every((_, dayOfWeek) => isSelected(dayOfWeek, mealSlot));
 
   const setWeek = (date: Date) => {
-    const nextWeekStart = getMonday(date).toISOString().split("T")[0];
+    const nextWeekStart = formatDateKey(getMonday(date));
     setSearchParams({ weekStart: nextWeekStart });
   };
 
   const prevWeek = () => {
-    setWeek(new Date(currentWeek.getTime() - 7 * 86400000));
+    const next = new Date(currentWeek);
+    next.setDate(next.getDate() - 7);
+    setWeek(next);
   };
 
   const nextWeek = () => {
-    setWeek(new Date(currentWeek.getTime() + 7 * 86400000));
+    const next = new Date(currentWeek);
+    next.setDate(next.getDate() + 7);
+    setWeek(next);
   };
 
-  const isCurrentWeek = getMonday(new Date()).toISOString().split("T")[0] === weekStart;
+  const isCurrentWeek = formatDateKey(getMonday(new Date())) === weekStart;
   const assignedMeals = menuQuery.data?.meals ?? [];
   const selectedSlotSet = new Set(selectedSlots.map((slot) => getSlotKey(slot.dayOfWeek, slot.mealSlot)));
   const overlappingMeals = assignedMeals.filter((meal) =>
