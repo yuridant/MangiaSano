@@ -3,10 +3,10 @@ import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
 const PRIMARY_LINKS = [
-  { to: "/", label: "Menu", icon: "🗓" },
-  { to: "/recipes", label: "Ricette", icon: "📖" },
-  { to: "/shopping", label: "Spesa", icon: "🛒" },
-  { to: "#more", label: "Altro", icon: "···" }
+  { to: "/", label: "Menu" },
+  { to: "/recipes", label: "Ricette" },
+  { to: "/shopping", label: "Spesa" },
+  { to: "#more", label: "Altro" }
 ] as const;
 
 const SECONDARY_LINKS = [
@@ -206,7 +206,7 @@ export function AppShell() {
                         : "app-mobile-nav-item-inactive"
                     }`}
                   >
-                    <span className="text-lg">{link.icon}</span>
+                    <span>{link.label}</span>
                   </button>
                 ) : (
                   <NavLink
@@ -220,7 +220,7 @@ export function AppShell() {
                       }`
                     }
                   >
-                    <span className="text-lg">{link.icon}</span>
+                    <span>{link.label}</span>
                   </NavLink>
                 )
               )}
