@@ -1,4 +1,12 @@
-import { BadGatewayException, BadRequestException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import {
+  BadGatewayException,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  ServiceUnavailableException
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
@@ -159,16 +167,24 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
 
-      this.logger.error("AI generation failed", error instanceof Error ? error.stack : undefined);
+      this.logger.error(
+        "AI generation failed",
+        error instanceof Error ? error.stack : undefined
+      );
 
       if (error instanceof OpenAI.RateLimitError) {
-        throw new ServiceUnavailableException("Il servizio AI è temporaneamente occupato. Riprova tra poco.");
+        const requestId = error.request_id ? ` Request ID OpenAI: ${error.request_id}.` : "";
+        throw new HttpException(
+          `OpenAI ha rifiutato la richiesta per quota o rate limit: ${error.message}.${requestId}`,
+          HttpStatus.TOO_MANY_REQUESTS
+        );
       }
       if (error instanceof OpenAI.APIConnectionError) {
         throw new ServiceUnavailableException("Impossibile contattare il servizio AI in questo momento.");
       }
       if (error instanceof OpenAI.APIError) {
-        throw new BadGatewayException(`OpenAI ha rifiutato la richiesta: ${error.message}`);
+        const requestId = error.request_id ? ` Request ID OpenAI: ${error.request_id}.` : "";
+        throw new BadGatewayException(`OpenAI ha rifiutato la richiesta: ${error.message}.${requestId}`);
       }
       if (error instanceof Error) {
         throw new BadGatewayException(`Errore durante la generazione AI: ${error.message}`);

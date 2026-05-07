@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { ManualWeekPlanner } from "../components/menu/ManualWeekPlanner";
 import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -168,31 +169,12 @@ export function MenuPage() {
         </div>
       </div>
 
-      {menuQuery.isLoading && (
-        <div className="flex justify-center py-10">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-sage border-t-transparent" />
-        </div>
-      )}
-
-      {menuQuery.isSuccess && !menuQuery.data && (
-        <div className="app-panel text-center">
-          <p className="text-slate-500">Nessun menu per questa settimana.</p>
-          <Link to={`/menu/generate?weekStart=${weekStart}`} className="app-btn app-btn-sage mt-4 inline-flex">
-            Genera menu con AI
-          </Link>
-        </div>
-      )}
-
-      {menuQuery.isSuccess && menuQuery.data && (
-        <WeekGrid menu={menuQuery.data} weekStart={weekStart} />
-      )}
-
       <div className="app-panel">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="font-bold text-ink">Gestione manuale pasti</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Puoi compilare il menu anche senza AI, usando ricette già presenti oppure un nome personalizzato.
+              Seleziona una cella della settimana e compila quel pasto con una ricetta esistente o un nome personalizzato.
             </p>
           </div>
           <button
@@ -204,37 +186,31 @@ export function MenuPage() {
           </button>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Giorno
-            <select
-              value={dayOfWeek}
-              onChange={(e) => setDayOfWeek(Number(e.target.value))}
-              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-            >
-              {DAYS_FULL.map((day, index) => (
-                <option key={day} value={index}>
-                  {day}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="mt-4">
+          <ManualWeekPlanner
+            meals={meals}
+            selectedDayOfWeek={dayOfWeek}
+            selectedMealSlot={mealSlot}
+            onSelect={(nextDayOfWeek, nextMealSlot) => {
+              const existingMeal = meals.find(
+                (meal) => meal.dayOfWeek === nextDayOfWeek && meal.mealSlot === nextMealSlot
+              );
 
-          <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Pasto
-            <select
-              value={mealSlot}
-              onChange={(e) => setMealSlot(e.target.value as MealSlot)}
-              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-            >
-              {SLOTS.map((slot) => (
-                <option key={slot} value={slot}>
-                  {SLOT_LABELS[slot]}
-                </option>
-              ))}
-            </select>
-          </label>
+              if (existingMeal) {
+                startEditMeal(existingMeal);
+                return;
+              }
+
+              setDayOfWeek(nextDayOfWeek);
+              setMealSlot(nextMealSlot);
+              setManualError("");
+            }}
+          />
         </div>
+
+        <p className="mt-4 text-sm font-medium text-ink">
+          Stai modificando: <span className="text-sage">{DAYS_FULL[dayOfWeek]} · {SLOT_LABELS[mealSlot]}</span>
+        </p>
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button
@@ -307,6 +283,25 @@ export function MenuPage() {
           {saveMealMutation.isPending ? "Salvataggio..." : "Salva pasto manuale"}
         </button>
       </div>
+
+      {menuQuery.isLoading && (
+        <div className="flex justify-center py-10">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-sage border-t-transparent" />
+        </div>
+      )}
+
+      {menuQuery.isSuccess && !menuQuery.data && (
+        <div className="app-panel text-center">
+          <p className="text-slate-500">Nessun menu per questa settimana.</p>
+          <Link to={`/menu/generate?weekStart=${weekStart}`} className="app-btn app-btn-sage mt-4 inline-flex">
+            Genera menu con AI
+          </Link>
+        </div>
+      )}
+
+      {menuQuery.isSuccess && menuQuery.data && (
+        <WeekGrid menu={menuQuery.data} weekStart={weekStart} />
+      )}
 
       {meals.length > 0 && (
         <div className="app-panel">

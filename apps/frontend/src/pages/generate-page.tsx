@@ -76,6 +76,7 @@ export function GeneratePage() {
   const allSlots = sortSelections(
     DAYS_FULL.flatMap((_, dayOfWeek) => SLOTS.map((mealSlot) => ({ dayOfWeek, mealSlot })))
   );
+  const isAllSlotsSelected = selectedSlots.length === allSlots.length;
 
   const toggleDaySelection = (dayOfWeek: number) => {
     setSelectedSlots((prev) => {
@@ -358,10 +359,10 @@ export function GeneratePage() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setSelectedSlots(allSlots)}
-          className="app-btn-xs app-btn-sage"
+          onClick={() => setSelectedSlots(isAllSlotsSelected ? [] : allSlots)}
+          className={`app-btn-xs ${isAllSlotsSelected ? "app-btn-sage" : "app-btn-secondary"}`}
         >
-          Tutti i pasti
+          {isAllSlotsSelected ? "Togli tutti i pasti" : "Tutti i pasti"}
         </button>
         <button
           type="button"
