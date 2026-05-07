@@ -1,9 +1,9 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { AiMealPlan, AiResponse, MealSlot, WeeklyMenu } from "../types";
+import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot, WeeklyMenu } from "../types";
 import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
@@ -50,6 +50,11 @@ export function GeneratePage() {
       ? new Date(requestedWeekStart + "T00:00:00")
       : getMonday(new Date());
   const weekStart = getMonday(parsedWeekStart).toISOString().split("T")[0];
+  const familyQuery = useQuery({
+    queryKey: ["family", activeFamilyId],
+    queryFn: () => api.get<FamilyDetail>(`/families/${activeFamilyId}`, token!),
+    enabled: !!token && !!activeFamilyId
+  });
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
     setSelectedSlots((prev) => {
@@ -310,6 +315,29 @@ export function GeneratePage() {
             month: "long",
             year: "numeric"
           })}.
+        </p>
+      </div>
+
+      <div className="app-panel">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Informazioni che verranno inviate all&apos;AI
+        </p>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Allergie</p>
+            <p className="mt-2 text-sm text-ink">{familyQuery.data?.allergyNotes || "Nessuna"}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Intolleranze</p>
+            <p className="mt-2 text-sm text-ink">{familyQuery.data?.intoleranceNotes || "Nessuna"}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Preferenze</p>
+            <p className="mt-2 text-sm text-ink">{familyQuery.data?.preferenceNotes || "Nessuna"}</p>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          L&apos;AI riceve anche tutte le ricette e gli ingredienti già presenti per riutilizzarli quando possibile.
         </p>
       </div>
 

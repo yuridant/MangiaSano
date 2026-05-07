@@ -17,6 +17,9 @@ export interface Family {
   name: string;
   role: MembershipRole;
   memberCount: number;
+  allergyNotes?: string | null;
+  intoleranceNotes?: string | null;
+  preferenceNotes?: string | null;
 }
 
 export interface Ingredient {
@@ -91,6 +94,9 @@ export interface FamilyInvitation {
 export interface FamilyDetail {
   id: string;
   name: string;
+  allergyNotes: string | null;
+  intoleranceNotes: string | null;
+  preferenceNotes: string | null;
   members: FamilyMember[];
   pendingInvitations: FamilyInvitation[];
 }

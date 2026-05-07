@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { WeeklyMenu } from "../types";
+import type { MealSlot, Recipe, WeeklyMenu } from "../types";
+import { DAYS_FULL, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
@@ -23,6 +24,7 @@ function formatWeekRange(weekStart: string) {
 
 export function MenuPage() {
   const { token, activeFamilyId } = useAuth();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [currentWeek, setCurrentWeek] = useState(() => {
     const requestedWeekStart = searchParams.get("weekStart");
@@ -33,12 +35,74 @@ export function MenuPage() {
   });
 
   const weekStart = currentWeek.toISOString().split("T")[0];
+  const [dayOfWeek, setDayOfWeek] = useState(0);
+  const [mealSlot, setMealSlot] = useState<MealSlot>("lunch");
+  const [mode, setMode] = useState<"recipe" | "custom">("recipe");
+  const [recipeId, setRecipeId] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [manualError, setManualError] = useState("");
 
   const menuQuery = useQuery({
     queryKey: ["menu", activeFamilyId, weekStart],
     queryFn: () =>
       api.get<WeeklyMenu | null>(`/menus/${weekStart}?familyId=${activeFamilyId}`, token!),
     enabled: !!token && !!activeFamilyId
+  });
+  const recipesQuery = useQuery({
+    queryKey: ["recipes", activeFamilyId],
+    queryFn: () => api.get<Recipe[]>(`/recipes?familyId=${activeFamilyId}`, token!),
+    enabled: !!token && !!activeFamilyId
+  });
+
+  const invalidateWeekData = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["menu", activeFamilyId, weekStart] }),
+      queryClient.invalidateQueries({ queryKey: ["shopping", activeFamilyId, weekStart] })
+    ]);
+  };
+
+  const resetManualForm = () => {
+    setDayOfWeek(0);
+    setMealSlot("lunch");
+    setMode("recipe");
+    setRecipeId("");
+    setCustomName("");
+    setManualError("");
+  };
+
+  const saveMealMutation = useMutation({
+    mutationFn: async () => {
+      if (mode === "recipe" && !recipeId) {
+        throw new Error("Seleziona una ricetta da inserire nel menu.");
+      }
+      if (mode === "custom" && !customName.trim()) {
+        throw new Error("Inserisci un nome per il pasto manuale.");
+      }
+
+      return api.post(
+        `/menus/${weekStart}/meals?familyId=${activeFamilyId}`,
+        {
+          dayOfWeek,
+          mealSlot,
+          recipeId: mode === "recipe" ? recipeId : undefined,
+          customName: mode === "custom" ? customName.trim() : undefined
+        },
+        token!
+      );
+    },
+    onSuccess: async () => {
+      await invalidateWeekData();
+      resetManualForm();
+    },
+    onError: (error) => {
+      setManualError(error instanceof Error ? error.message : "Errore durante il salvataggio del pasto.");
+    }
+  });
+
+  const removeMealMutation = useMutation({
+    mutationFn: (mealId: string) =>
+      api.delete(`/menus/${weekStart}/meals/${mealId}?familyId=${activeFamilyId}`, token!),
+    onSuccess: invalidateWeekData
   });
 
   const prevWeek = () => {
@@ -51,6 +115,23 @@ export function MenuPage() {
 
   const isCurrentWeek =
     getMonday(new Date()).toISOString().split("T")[0] === weekStart;
+  const meals = menuQuery.data?.meals ?? [];
+  const recipeOptions = recipesQuery.data ?? [];
+
+  const startEditMeal = (meal: NonNullable<WeeklyMenu["meals"]>[number]) => {
+    setDayOfWeek(meal.dayOfWeek);
+    setMealSlot(meal.mealSlot);
+    if (meal.recipeId && meal.recipe) {
+      setMode("recipe");
+      setRecipeId(meal.recipeId);
+      setCustomName("");
+    } else {
+      setMode("custom");
+      setRecipeId("");
+      setCustomName(meal.customName ?? "");
+    }
+    setManualError("");
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -104,6 +185,164 @@ export function MenuPage() {
 
       {menuQuery.isSuccess && menuQuery.data && (
         <WeekGrid menu={menuQuery.data} weekStart={weekStart} />
+      )}
+
+      <div className="app-panel">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-bold text-ink">Gestione manuale pasti</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Puoi compilare il menu anche senza AI, usando ricette già presenti oppure un nome personalizzato.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={resetManualForm}
+            className="text-xs text-slate-400 hover:text-ink"
+          >
+            Reset
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm text-slate-600">
+            Giorno
+            <select
+              value={dayOfWeek}
+              onChange={(e) => setDayOfWeek(Number(e.target.value))}
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+            >
+              {DAYS_FULL.map((day, index) => (
+                <option key={day} value={index}>
+                  {day}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm text-slate-600">
+            Pasto
+            <select
+              value={mealSlot}
+              onChange={(e) => setMealSlot(e.target.value as MealSlot)}
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+            >
+              {SLOTS.map((slot) => (
+                <option key={slot} value={slot}>
+                  {SLOT_LABELS[slot]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("recipe")}
+            className={`app-btn-xs ${mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
+          >
+            Usa una ricetta esistente
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("custom")}
+            className={`app-btn-xs ${mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
+          >
+            Inserisci un pasto manuale
+          </button>
+        </div>
+
+        <div className="mt-4">
+          {mode === "recipe" ? (
+            <label className="flex flex-col gap-1 text-sm text-slate-600">
+              Ricetta
+              <select
+                value={recipeId}
+                onChange={(e) => setRecipeId(e.target.value)}
+                className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+              >
+                <option value="">Seleziona una ricetta</option>
+                {recipeOptions.map((recipe) => (
+                  <option key={recipe.id} value={recipe.id}>
+                    {recipe.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="flex flex-col gap-1 text-sm text-slate-600">
+              Nome del pasto
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="Es. Toast integrale con hummus"
+                className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+              />
+            </label>
+          )}
+        </div>
+
+        <p className="mt-3 text-xs text-slate-500">
+          Per un pasto completo con ingredienti e lista della spesa, crea prima una ricetta in{" "}
+          <Link to="/recipes" className="font-semibold text-sage hover:text-ink">
+            Ricette
+          </Link>
+          . Se ti mancano gli elementi base, puoi aggiungerli in{" "}
+          <Link to="/ingredients" className="font-semibold text-sage hover:text-ink">
+            Ingredienti
+          </Link>
+          .
+        </p>
+
+        {manualError && <p className="mt-3 text-sm text-rose-600">{manualError}</p>}
+
+        <button
+          type="button"
+          onClick={() => saveMealMutation.mutate()}
+          disabled={saveMealMutation.isPending}
+          className="app-btn app-btn-sage mt-4 disabled:opacity-60"
+        >
+          {saveMealMutation.isPending ? "Salvataggio..." : "Salva pasto manuale"}
+        </button>
+      </div>
+
+      {meals.length > 0 && (
+        <div className="app-panel">
+          <h2 className="font-bold text-ink">Pasti già inseriti</h2>
+          <div className="mt-4 flex flex-col gap-2">
+            {meals.map((meal) => (
+              <div
+                key={meal.id}
+                className="flex items-center justify-between rounded-2xl bg-slate-50/80 px-4 py-3"
+              >
+                <div>
+                  <p className="text-xs font-semibold text-slate-400">
+                    {DAYS_FULL[meal.dayOfWeek]} · {SLOT_LABELS[meal.mealSlot]}
+                  </p>
+                  <p className="font-medium text-ink">{meal.recipe?.name ?? meal.customName ?? "—"}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => startEditMeal(meal)}
+                    className="text-xs text-slate-400 hover:text-ink"
+                  >
+                    Modifica
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeMealMutation.mutate(meal.id)}
+                    className="text-xs text-rose-400 hover:text-rose-600"
+                  >
+                    Rimuovi
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

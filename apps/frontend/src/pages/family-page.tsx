@@ -12,6 +12,9 @@ export function FamilyPage() {
   const [inviteSuccess, setInviteSuccess] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [familyName, setFamilyName] = useState("");
+  const [allergyNotes, setAllergyNotes] = useState("");
+  const [intoleranceNotes, setIntoleranceNotes] = useState("");
+  const [preferenceNotes, setPreferenceNotes] = useState("");
   const [nameError, setNameError] = useState("");
   const [newFamilyName, setNewFamilyName] = useState("");
   const [createError, setCreateError] = useState("");
@@ -22,9 +25,14 @@ export function FamilyPage() {
     enabled: !!token && !!activeFamilyId
   });
 
-  const updateNameMutation = useMutation({
-    mutationFn: (name: string) =>
-      api.patch<Family>(`/families/${activeFamilyId}`, { name }, token!),
+  const updateFamilyMutation = useMutation({
+    mutationFn: (payload: {
+      name?: string;
+      allergyNotes?: string;
+      intoleranceNotes?: string;
+      preferenceNotes?: string;
+    }) =>
+      api.patch<Family>(`/families/${activeFamilyId}`, payload, token!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["family", activeFamilyId] });
       setEditingName(false);
@@ -138,7 +146,12 @@ export function FamilyPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              updateNameMutation.mutate(familyName);
+              updateFamilyMutation.mutate({
+                name: familyName,
+                allergyNotes,
+                intoleranceNotes,
+                preferenceNotes
+              });
             }}
             className="flex flex-col gap-3"
           >
@@ -149,6 +162,27 @@ export function FamilyPage() {
               required
               placeholder="Nome famiglia"
               className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+            />
+            <textarea
+              value={allergyNotes}
+              onChange={(e) => setAllergyNotes(e.target.value)}
+              rows={3}
+              placeholder="Allergie da evitare (es. arachidi, crostacei)"
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none resize-none"
+            />
+            <textarea
+              value={intoleranceNotes}
+              onChange={(e) => setIntoleranceNotes(e.target.value)}
+              rows={3}
+              placeholder="Intolleranze o limiti alimentari (es. lattosio, glutine)"
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none resize-none"
+            />
+            <textarea
+              value={preferenceNotes}
+              onChange={(e) => setPreferenceNotes(e.target.value)}
+              rows={3}
+              placeholder="Preferenze (es. più legumi, meno carne rossa, piatti veloci)"
+              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none resize-none"
             />
             {nameError && <p className="text-sm text-rose-600">{nameError}</p>}
             <div className="flex gap-3">
@@ -161,7 +195,7 @@ export function FamilyPage() {
               </button>
               <button
                 type="submit"
-                disabled={updateNameMutation.isPending}
+                disabled={updateFamilyMutation.isPending}
                 className="app-btn-sm app-btn-sage flex-1 disabled:opacity-60"
               >
                 Salva
@@ -176,7 +210,13 @@ export function FamilyPage() {
             </div>
             {isOwner && (
               <button
-                onClick={() => { setFamilyName(family.name); setEditingName(true); }}
+                onClick={() => {
+                  setFamilyName(family.name);
+                  setAllergyNotes(family.allergyNotes ?? "");
+                  setIntoleranceNotes(family.intoleranceNotes ?? "");
+                  setPreferenceNotes(family.preferenceNotes ?? "");
+                  setEditingName(true);
+                }}
                 className="text-xs text-slate-400 hover:text-ink"
                 type="button"
               >
@@ -184,6 +224,29 @@ export function FamilyPage() {
               </button>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="app-panel">
+        <h2 className="mb-4 font-bold text-ink">Profilo alimentare</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Allergie</p>
+            <p className="mt-2 text-sm text-ink">{family.allergyNotes || "Nessuna informazione inserita."}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Intolleranze</p>
+            <p className="mt-2 text-sm text-ink">{family.intoleranceNotes || "Nessuna informazione inserita."}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50/80 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Preferenze</p>
+            <p className="mt-2 text-sm text-ink">{family.preferenceNotes || "Nessuna informazione inserita."}</p>
+          </div>
+        </div>
+        {isOwner && (
+          <p className="mt-4 text-xs text-slate-500">
+            Queste informazioni vengono passate anche all&apos;AI quando generi il menu.
+          </p>
         )}
       </div>
 

@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import OpenAI from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from "../../common/meal-slots";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -48,6 +49,7 @@ IMPORTANTE: Rispondi ESCLUSIVAMENTE con JSON valido. Nessun testo prima o dopo i
 @Injectable()
 export class AiService {
   private client: OpenAI | null = null;
+  private readonly logger = new Logger(AiService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,7 +65,16 @@ export class AiService {
   ): Promise<AiResponse> {
     await this.families.requireMembership(userId, familyId);
 
-    const [recipes, ingredients] = await Promise.all([
+    const [family, recipes, ingredients] = await Promise.all([
+      this.prisma.family.findUniqueOrThrow({
+        where: { id: familyId },
+        select: {
+          name: true,
+          allergyNotes: true,
+          intoleranceNotes: true,
+          preferenceNotes: true
+        }
+      }),
       this.prisma.recipe.findMany({
         where: { familyId },
         include: {
@@ -74,18 +85,30 @@ export class AiService {
     ]);
 
     const context = {
-      existingRecipes: recipes.map((recipe) => ({
+      existingRecipes: [...recipes]
+        .sort((a, b) => a.name.localeCompare(b.name, "it"))
+        .map((recipe) => ({
         id: recipe.id,
         name: recipe.name,
         description: recipe.description,
         mealType: recipe.mealType,
-        ingredients: recipe.ingredients.map((recipeIngredient) => recipeIngredient.ingredient.name)
+        ingredients: [...recipe.ingredients]
+          .map((recipeIngredient) => recipeIngredient.ingredient.name)
+          .sort((a, b) => a.localeCompare(b, "it"))
       })),
-      existingIngredients: ingredients.map((ingredient) => ({
+      existingIngredients: [...ingredients]
+        .sort((a, b) => a.name.localeCompare(b.name, "it"))
+        .map((ingredient) => ({
         id: ingredient.id,
         name: ingredient.name,
         category: ingredient.category
       }))
+    };
+    const dietaryProfile = {
+      familyName: family.name,
+      allergies: family.allergyNotes,
+      intolerances: family.intoleranceNotes,
+      preferences: family.preferenceNotes
     };
 
     const dayNames = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"];
@@ -94,69 +117,64 @@ export class AiService {
       .map((slot) => `${dayNames[slot.dayOfWeek]} - ${MEAL_SLOT_LABELS[slot.mealSlot]}`)
       .join(", ");
 
-    const userMessage = `Obiettivo: ${goal}
+    const userMessage = `Obiettivo nutrizionale: ${goal}
 
 Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id):
-${JSON.stringify(context.existingRecipes, null, 2)}
+${JSON.stringify(context.existingRecipes)}
 
 Ingredienti già presenti nell'app:
-${JSON.stringify(context.existingIngredients, null, 2)}
+${JSON.stringify(context.existingIngredients)}
+
+Profilo alimentare della famiglia da rispettare SEMPRE:
+${JSON.stringify(dietaryProfile)}
 
 Genera un piano per questi slot: ${slotsDescription}
 Slot richiesti in formato strutturato:
-${JSON.stringify(slots, null, 2)}
-
-Rispondi con questo JSON esatto (senza testo aggiuntivo):
-{
-  "weeklyPlan": [
-    {
-      "dayOfWeek": 0,
-      "mealSlot": "lunch",
-      "recipeId": "id-se-usi-ricetta-esistente",
-      "recipeName": "Nome ricetta",
-      "recipeDescription": "Descrizione breve"
-    }
-  ],
-  "newRecipes": [
-    {
-      "name": "Nome nuova ricetta",
-      "description": "Descrizione",
-      "mealType": "snack_morning",
-      "ingredients": ["nome ingrediente 1", "nome ingrediente 2"]
-    }
-  ],
-  "newIngredients": [
-    {
-      "name": "nome ingrediente nuovo",
-      "category": "categoria"
-    }
-  ]
-}
+${JSON.stringify(slots)}
 
 Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
 Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
 Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes.
 Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
-Prima di rispondere, verifica internamente che il JSON sia valido e completo.`;
-
-    const completion = await this.getClient().chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMessage }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.7
-    });
-
-    const raw = completion.choices[0]?.message?.content ?? "{}";
+Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
+Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
+Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`;
 
     try {
-      const parsed = JSON.parse(raw);
-      return this.validateAiResponse(aiResponseSchema.parse(parsed), recipes.map((recipe) => recipe.id), slots);
+      const completion = await this.getClient().beta.chat.completions.parse({
+        model: "gpt-4o-2024-08-06",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userMessage }
+        ],
+        response_format: zodResponseFormat(aiResponseSchema, "weekly_menu_plan"),
+        temperature: 0.7
+      });
+
+      const parsed = completion.choices[0]?.message?.parsed;
+      if (!parsed) {
+        throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
+      }
+      return this.validateAiResponse(parsed, recipes.map((recipe) => recipe.id), slots);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
-      throw new BadRequestException("La risposta AI non è nel formato atteso. Riprova.");
+
+      this.logger.error("AI generation failed", error instanceof Error ? error.stack : undefined);
+
+      if (error instanceof OpenAI.RateLimitError) {
+        throw new ServiceUnavailableException("Il servizio AI è temporaneamente occupato. Riprova tra poco.");
+      }
+      if (error instanceof OpenAI.APIConnectionError) {
+        throw new ServiceUnavailableException("Impossibile contattare il servizio AI in questo momento.");
+      }
+      if (error instanceof OpenAI.APIError) {
+        throw new BadGatewayException(`OpenAI ha rifiutato la richiesta: ${error.message}`);
+      }
+      if (error instanceof Error) {
+        throw new BadGatewayException(`Errore durante la generazione AI: ${error.message}`);
+      }
+
+      throw new BadGatewayException("Errore imprevisto durante la generazione AI.");
     }
   }
 

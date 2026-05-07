@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { MEAL_SLOT_ORDER, type MealSlot } from "../../common/meal-slots";
 import { FamiliesService } from "../families/families.service";
@@ -60,6 +60,16 @@ export class MenusService {
   ) {
     await this.families.requireMembership(userId, familyId);
 
+    if (data.recipeId) {
+      const recipe = await this.prisma.recipe.findUnique({
+        where: { id: data.recipeId },
+        select: { id: true, familyId: true }
+      });
+      if (!recipe || recipe.familyId !== familyId) {
+        throw new BadRequestException("La ricetta selezionata non appartiene alla famiglia attiva.");
+      }
+    }
+
     const date = this.parseWeekStart(weekStart);
     const menu = await this.prisma.weeklyMenu.upsert({
       where: { weekStart_familyId: { weekStart: date, familyId } },
@@ -80,11 +90,11 @@ export class MenusService {
         dayOfWeek: data.dayOfWeek,
         mealSlot: data.mealSlot,
         recipeId: data.recipeId || null,
-        customName: data.customName || null
+        customName: data.customName?.trim() || null
       },
       update: {
         recipeId: data.recipeId || null,
-        customName: data.customName || null
+        customName: data.customName?.trim() || null
       },
       include: { recipe: { select: { id: true, name: true } } }
     });
@@ -114,6 +124,18 @@ export class MenusService {
   ) {
     await this.families.requireMembership(userId, familyId);
 
+    const allowedRecipeIds = new Set(
+      (
+        await this.prisma.recipe.findMany({
+          where: { familyId, id: { in: meals.map((meal) => meal.recipeId) } },
+          select: { id: true }
+        })
+      ).map((recipe) => recipe.id)
+    );
+    if (allowedRecipeIds.size !== new Set(meals.map((meal) => meal.recipeId)).size) {
+      throw new BadRequestException("Il menu contiene ricette non valide per la famiglia attiva.");
+    }
+
     const date = this.parseWeekStart(weekStart);
     const menu = await this.prisma.weeklyMenu.upsert({
       where: { weekStart_familyId: { weekStart: date, familyId } },
@@ -129,10 +151,10 @@ export class MenusService {
               weeklyMenuId: menu.id,
               dayOfWeek: meal.dayOfWeek,
               mealSlot: meal.mealSlot
-            }
+          }
           },
           create: { weeklyMenuId: menu.id, ...meal },
-          update: { recipeId: meal.recipeId }
+          update: { recipeId: meal.recipeId, customName: null }
         })
       )
     );

@@ -23,7 +23,13 @@ export class FamiliesService {
         name,
         memberships: { create: { userId, role: "owner" } }
       },
-      select: { id: true, name: true }
+      select: {
+        id: true,
+        name: true,
+        allergyNotes: true,
+        intoleranceNotes: true,
+        preferenceNotes: true
+      }
     });
     return family;
   }
@@ -47,6 +53,9 @@ export class FamiliesService {
     return {
       id: family.id,
       name: family.name,
+      allergyNotes: family.allergyNotes,
+      intoleranceNotes: family.intoleranceNotes,
+      preferenceNotes: family.preferenceNotes,
       members: family.memberships.map((m) => ({
         id: m.user.id,
         name: m.user.name,
@@ -58,14 +67,34 @@ export class FamiliesService {
     };
   }
 
-  async updateFamilyName(userId: string, familyId: string, name: string) {
+  async updateFamily(
+    userId: string,
+    familyId: string,
+    data: {
+      name?: string;
+      allergyNotes?: string;
+      intoleranceNotes?: string;
+      preferenceNotes?: string;
+    }
+  ) {
     const membership = await this.requireMembership(userId, familyId);
     if (membership.role !== "owner") throw new ForbiddenException("Solo il proprietario può modificare il nome.");
 
     return this.prisma.family.update({
       where: { id: familyId },
-      data: { name },
-      select: { id: true, name: true }
+      data: {
+        ...(data.name !== undefined && { name: data.name.trim() }),
+        ...(data.allergyNotes !== undefined && { allergyNotes: data.allergyNotes.trim() || null }),
+        ...(data.intoleranceNotes !== undefined && { intoleranceNotes: data.intoleranceNotes.trim() || null }),
+        ...(data.preferenceNotes !== undefined && { preferenceNotes: data.preferenceNotes.trim() || null })
+      },
+      select: {
+        id: true,
+        name: true,
+        allergyNotes: true,
+        intoleranceNotes: true,
+        preferenceNotes: true
+      }
     });
   }
 

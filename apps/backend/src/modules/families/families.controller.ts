@@ -4,7 +4,19 @@ import { AuthGuard } from "../../common/guards/auth.guard";
 import { FamiliesService } from "./families.service";
 
 const createFamilySchema = z.object({ name: z.string().min(2) });
-const updateNameSchema = z.object({ name: z.string().min(2) });
+const updateFamilySchema = z.object({
+  name: z.string().min(2).optional(),
+  allergyNotes: z.string().max(4000).optional(),
+  intoleranceNotes: z.string().max(4000).optional(),
+  preferenceNotes: z.string().max(4000).optional()
+}).refine(
+  (body) =>
+    body.name !== undefined ||
+    body.allergyNotes !== undefined ||
+    body.intoleranceNotes !== undefined ||
+    body.preferenceNotes !== undefined,
+  { message: "Nessun campo da aggiornare." }
+);
 const inviteSchema = z.object({ email: z.string().email() });
 
 type AuthedRequest = { user: { id: string } };
@@ -26,9 +38,8 @@ export class FamiliesController {
   }
 
   @Patch(":familyId")
-  updateName(@Req() req: AuthedRequest, @Param("familyId") familyId: string, @Body() body: unknown) {
-    const { name } = updateNameSchema.parse(body);
-    return this.familiesService.updateFamilyName(req.user.id, familyId, name);
+  updateFamily(@Req() req: AuthedRequest, @Param("familyId") familyId: string, @Body() body: unknown) {
+    return this.familiesService.updateFamily(req.user.id, familyId, updateFamilySchema.parse(body));
   }
 
   @Post(":familyId/invitations")

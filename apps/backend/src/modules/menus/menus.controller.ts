@@ -9,6 +9,8 @@ const upsertMealSchema = z.object({
   mealSlot: mealSlotSchema,
   recipeId: z.string().optional(),
   customName: z.string().optional()
+}).refine((body) => Boolean(body.recipeId) !== Boolean(body.customName), {
+  message: "Specifica una ricetta esistente oppure un nome manuale, non entrambi."
 });
 
 const bulkSaveSchema = z.object({
@@ -50,7 +52,12 @@ export class MenusController {
     @Body() body: unknown
   ) {
     const data = upsertMealSchema.parse(body);
-    return this.menusService.upsertMeal(req.user.id, familyId, weekStart, data as { dayOfWeek: number; mealSlot: MealSlot });
+    return this.menusService.upsertMeal(req.user.id, familyId, weekStart, data as {
+      dayOfWeek: number;
+      mealSlot: MealSlot;
+      recipeId?: string;
+      customName?: string;
+    });
   }
 
   @Put(":weekStart/meals")

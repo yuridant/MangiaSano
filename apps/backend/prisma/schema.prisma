@@ -22,9 +22,12 @@ model User {
 }
 
 model Family {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  name            String
+  allergyNotes    String?
+  intoleranceNotes String?
+  preferenceNotes String?
+  createdAt       DateTime @default(now())
 
   memberships   FamilyMembership[]
   invitations   FamilyInvitation[]
