@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -35,7 +35,7 @@ export function GeneratePage() {
   const { token, activeFamilyId } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [selectedSlots, setSelectedSlots] = useState<SelectedSlot[]>([]);
   const [aiResult, setAiResult] = useState<AiResponse | null>(null);
@@ -49,12 +49,20 @@ export function GeneratePage() {
     requestedWeekStart && !Number.isNaN(new Date(requestedWeekStart).getTime())
       ? new Date(requestedWeekStart + "T00:00:00")
       : getMonday(new Date());
-  const weekStart = getMonday(parsedWeekStart).toISOString().split("T")[0];
+  const currentWeek = getMonday(parsedWeekStart);
+  const weekStart = currentWeek.toISOString().split("T")[0];
   const familyQuery = useQuery({
     queryKey: ["family", activeFamilyId],
     queryFn: () => api.get<FamilyDetail>(`/families/${activeFamilyId}`, token!),
     enabled: !!token && !!activeFamilyId
   });
+
+  useEffect(() => {
+    setAiResult(null);
+    setPlanToSave([]);
+    setError("");
+    setStep("select");
+  }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
     setSelectedSlots((prev) => {
@@ -109,6 +117,21 @@ export function GeneratePage() {
 
   const isMealTypeFullySelected = (mealSlot: MealSlot) =>
     DAYS_FULL.every((_, dayOfWeek) => isSelected(dayOfWeek, mealSlot));
+
+  const setWeek = (date: Date) => {
+    const nextWeekStart = getMonday(date).toISOString().split("T")[0];
+    setSearchParams({ weekStart: nextWeekStart });
+  };
+
+  const prevWeek = () => {
+    setWeek(new Date(currentWeek.getTime() - 7 * 86400000));
+  };
+
+  const nextWeek = () => {
+    setWeek(new Date(currentWeek.getTime() + 7 * 86400000));
+  };
+
+  const isCurrentWeek = getMonday(new Date()).toISOString().split("T")[0] === weekStart;
 
   const generateMutation = useMutation({
     mutationFn: () =>
@@ -258,6 +281,34 @@ export function GeneratePage() {
             year: "numeric"
           })}.
         </p>
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={prevWeek}
+            className="app-btn-xs app-btn-secondary"
+            type="button"
+          >
+            ← Prec.
+          </button>
+          <div className="flex-1 text-center">
+            <p className="text-sm font-semibold text-ink">
+              {new Date(weekStart + "T00:00:00").toLocaleDateString("it-IT", {
+                day: "numeric",
+                month: "long",
+                year: "numeric"
+              })}
+            </p>
+            {isCurrentWeek && (
+              <span className="text-xs font-medium text-sage">Settimana corrente</span>
+            )}
+          </div>
+          <button
+            onClick={nextWeek}
+            className="app-btn-xs app-btn-secondary"
+            type="button"
+          >
+            Succ. →
+          </button>
+        </div>
       </div>
 
       <div className="app-panel">

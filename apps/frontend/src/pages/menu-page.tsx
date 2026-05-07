@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ManualWeekPlanner } from "../components/menu/ManualWeekPlanner";
 import { WeekGrid } from "../components/menu/WeekGrid";
@@ -26,15 +26,13 @@ function formatWeekRange(weekStart: string) {
 export function MenuPage() {
   const { token, activeFamilyId } = useAuth();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
-  const [currentWeek, setCurrentWeek] = useState(() => {
-    const requestedWeekStart = searchParams.get("weekStart");
-    if (!requestedWeekStart || Number.isNaN(new Date(requestedWeekStart).getTime())) {
-      return getMonday(new Date());
-    }
-    return getMonday(new Date(requestedWeekStart + "T00:00:00"));
-  });
-
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedWeekStart = searchParams.get("weekStart");
+  const parsedWeek =
+    requestedWeekStart && !Number.isNaN(new Date(requestedWeekStart).getTime())
+      ? new Date(requestedWeekStart + "T00:00:00")
+      : getMonday(new Date());
+  const currentWeek = getMonday(parsedWeek);
   const weekStart = currentWeek.toISOString().split("T")[0];
   const [dayOfWeek, setDayOfWeek] = useState(0);
   const [mealSlot, setMealSlot] = useState<MealSlot>("lunch");
@@ -43,6 +41,7 @@ export function MenuPage() {
   const [customName, setCustomName] = useState("");
   const [manualError, setManualError] = useState("");
   const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
 
   const menuQuery = useQuery({
     queryKey: ["menu", activeFamilyId, weekStart],
@@ -63,6 +62,10 @@ export function MenuPage() {
     ]);
   };
 
+  useEffect(() => {
+    resetManualForm();
+  }, [weekStart]);
+
   const resetManualForm = () => {
     setDayOfWeek(0);
     setMealSlot("lunch");
@@ -70,6 +73,13 @@ export function MenuPage() {
     setRecipeId("");
     setCustomName("");
     setManualError("");
+    setEditingMealId(null);
+    setManualModalOpen(false);
+  };
+
+  const closeManualModal = () => {
+    setManualError("");
+    setEditingMealId(null);
     setManualModalOpen(false);
   };
 
@@ -105,15 +115,23 @@ export function MenuPage() {
   const removeMealMutation = useMutation({
     mutationFn: (mealId: string) =>
       api.delete(`/menus/${weekStart}/meals/${mealId}?familyId=${activeFamilyId}`, token!),
-    onSuccess: invalidateWeekData
+    onSuccess: async () => {
+      await invalidateWeekData();
+      resetManualForm();
+    }
   });
 
+  const setWeek = (date: Date) => {
+    const nextWeekStart = getMonday(date).toISOString().split("T")[0];
+    setSearchParams({ weekStart: nextWeekStart });
+  };
+
   const prevWeek = () => {
-    setCurrentWeek((d) => new Date(d.getTime() - 7 * 86400000));
+    setWeek(new Date(currentWeek.getTime() - 7 * 86400000));
   };
 
   const nextWeek = () => {
-    setCurrentWeek((d) => new Date(d.getTime() + 7 * 86400000));
+    setWeek(new Date(currentWeek.getTime() + 7 * 86400000));
   };
 
   const isCurrentWeek =
@@ -124,6 +142,7 @@ export function MenuPage() {
   const startEditMeal = (meal: NonNullable<WeeklyMenu["meals"]>[number]) => {
     setDayOfWeek(meal.dayOfWeek);
     setMealSlot(meal.mealSlot);
+    setEditingMealId(meal.id);
     if (meal.recipeId && meal.recipe) {
       setMode("recipe");
       setRecipeId(meal.recipeId);
@@ -210,6 +229,7 @@ export function MenuPage() {
               setRecipeId("");
               setCustomName("");
               setManualError("");
+              setEditingMealId(null);
               setManualModalOpen(true);
             }}
           />
@@ -230,7 +250,7 @@ export function MenuPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setManualModalOpen(false)}
+                onClick={closeManualModal}
                 className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-500 hover:bg-slate-200 hover:text-ink"
               >
                 Chiudi
@@ -300,9 +320,19 @@ export function MenuPage() {
             {manualError && <p className="mt-4 text-sm text-rose-600">{manualError}</p>}
 
             <div className="mt-5 flex gap-3">
+              {editingMealId && (
+                <button
+                  type="button"
+                  onClick={() => removeMealMutation.mutate(editingMealId)}
+                  disabled={removeMealMutation.isPending}
+                  className="app-btn app-btn-secondary text-rose-600 disabled:opacity-60"
+                >
+                  {removeMealMutation.isPending ? "Rimozione..." : "Elimina"}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setManualModalOpen(false)}
+                onClick={closeManualModal}
                 className="app-btn app-btn-secondary flex-1"
               >
                 Annulla
@@ -337,43 +367,6 @@ export function MenuPage() {
 
       {menuQuery.isSuccess && menuQuery.data && (
         <WeekGrid menu={menuQuery.data} weekStart={weekStart} />
-      )}
-
-      {meals.length > 0 && (
-        <div className="app-panel">
-          <h2 className="font-bold text-ink">Pasti già inseriti</h2>
-          <div className="mt-4 flex flex-col gap-2">
-            {meals.map((meal) => (
-              <div
-                key={meal.id}
-                className="flex items-center justify-between rounded-2xl bg-slate-50/80 px-4 py-3"
-              >
-                <div>
-                  <p className="text-xs font-semibold text-slate-400">
-                    {DAYS_FULL[meal.dayOfWeek]} · {SLOT_LABELS[meal.mealSlot]}
-                  </p>
-                  <p className="font-medium text-ink">{meal.recipe?.name ?? meal.customName ?? "—"}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => startEditMeal(meal)}
-                    className="text-xs text-slate-400 hover:text-ink"
-                  >
-                    Modifica
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeMealMutation.mutate(meal.id)}
-                    className="text-xs text-rose-400 hover:text-rose-600"
-                  >
-                    Rimuovi
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );

@@ -45,6 +45,15 @@ function isPrimaryLinkActive(pathname: string, to: string) {
   return matchesPath(pathname, to);
 }
 
+function withWeekStartIfRelevant(pathname: string, search: string, to: string) {
+  const params = new URLSearchParams(search);
+  const weekStart = params.get("weekStart");
+  if (!weekStart) return to;
+  if (!pathname.startsWith("/menu")) return to;
+  if (to !== "/menu" && to !== "/menu/generate") return to;
+  return `${to}?weekStart=${weekStart}`;
+}
+
 export function AppShell() {
   const { user, families, activeFamilyId, isReady } = useAuth();
   const location = useLocation();
@@ -113,7 +122,7 @@ export function AppShell() {
             {SIDEBAR_LINKS.map((link) => (
               <NavLink
                 key={link.to}
-                to={link.to}
+                to={withWeekStartIfRelevant(location.pathname, location.search, link.to)}
                 className={() =>
                   `rounded-[1.4rem] px-4 py-3 text-sm font-medium transition ${
                     isSidebarLinkActive(location.pathname, link.to)
@@ -175,7 +184,7 @@ export function AppShell() {
                     {SECONDARY_LINKS.map((link) => (
                       <NavLink
                         key={link.to}
-                        to={link.to}
+                        to={withWeekStartIfRelevant(location.pathname, location.search, link.to)}
                         className={({ isActive }) =>
                           `rounded-[1.2rem] px-4 py-3 text-sm font-semibold transition ${
                             isActive
