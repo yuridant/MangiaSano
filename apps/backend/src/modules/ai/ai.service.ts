@@ -8,14 +8,15 @@ import {
   ServiceUnavailableException
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
 import OpenAI from "openai";
-import { zodResponseFormat } from "openai/helpers/zod";
+import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from "../../common/meal-slots";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FamiliesService } from "../families/families.service";
 
-const aiResponseSchema = z.object({
+export const aiResponseSchema = z.object({
   weeklyPlan: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
@@ -51,9 +52,7 @@ Principi guida:
 - Varia le fonti proteiche (legumi, pesce, carne magra, uova)
 - Includi verdure ad ogni pasto principale
 - Limita zuccheri semplici, pane bianco, riso raffinato
-- Privilegia ingredienti di stagione, soprattutto frutta, verdura e prodotti freschi, così da favorire una spesa locale al mercato e ricette più fresche
-
-IMPORTANTE: Rispondi ESCLUSIVAMENTE con JSON valido. Nessun testo prima o dopo il JSON. Nessun blocco markdown. Solo JSON puro.`;
+- Privilegia ingredienti di stagione, soprattutto frutta, verdura e prodotti freschi, così da favorire una spesa locale al mercato e ricette più fresche`;
 
 @Injectable()
 export class AiService {
@@ -150,24 +149,25 @@ Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'ap
 Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`;
 
     try {
-      const completion = await this.getClient().beta.chat.completions.parse({
+      const response = await this.getClient().responses.parse({
         model: "gpt-4o-2024-08-06",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage }
-        ],
-        response_format: zodResponseFormat(aiResponseSchema, "weekly_menu_plan"),
+        instructions: SYSTEM_PROMPT,
+        input: userMessage,
+        text: {
+          format: zodTextFormat(aiResponseSchema, "weekly_menu_plan")
+        },
         temperature: 0.7
       });
 
-      const parsed = completion.choices[0]?.message?.parsed;
+      const parsed = response.output_parsed;
       if (!parsed) {
         throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
       }
       return this.validateAiResponse(
         parsed,
         recipes.map((recipe) => ({ id: recipe.id, name: recipe.name })),
-        slots
+        slots,
+        { requireCompleteCoverage: true }
       );
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
@@ -199,20 +199,237 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     }
   }
 
+  async applyGeneratedPlan(
+    userId: string,
+    familyId: string,
+    weekStart: string,
+    selectedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    response: AiResponse
+  ) {
+    await this.families.requireMembership(userId, familyId);
+
+    const normalizedSelectedSlots = this.normalizeSlots(selectedSlots);
+    const requestedSlotKeys = new Set(
+      normalizedSelectedSlots.map((slot) => this.getSlotKey(slot.dayOfWeek, slot.mealSlot))
+    );
+    const filteredPlan = response.weeklyPlan.filter((meal) =>
+      requestedSlotKeys.has(this.getSlotKey(meal.dayOfWeek, meal.mealSlot))
+    );
+
+    const [existingRecipes, existingIngredients] = await Promise.all([
+      this.prisma.recipe.findMany({
+        where: { familyId },
+        select: { id: true, name: true }
+      }),
+      this.prisma.ingredient.findMany({
+        where: { familyId },
+        select: { id: true, name: true }
+      })
+    ]);
+
+    const normalizedResponse = this.validateAiResponse(
+      {
+        ...response,
+        weeklyPlan: filteredPlan
+      },
+      existingRecipes,
+      normalizedSelectedSlots,
+      { requireCompleteCoverage: false }
+    );
+
+    const existingRecipesByName = new Map(
+      existingRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
+    );
+    const existingIngredientsByName = new Map(
+      existingIngredients.map((ingredient) => [this.normalizeRecipeName(ingredient.name), ingredient])
+    );
+
+    const recipesToCreateByName = new Map(
+      normalizedResponse.newRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
+    );
+    const ingredientMetadataByName = new Map(
+      normalizedResponse.newIngredients.map((ingredient) => [
+        this.normalizeRecipeName(ingredient.name),
+        ingredient
+      ])
+    );
+
+    const usedNewRecipeNames = new Set(
+      normalizedResponse.weeklyPlan
+        .filter((meal) => !meal.recipeId)
+        .map((meal) => this.normalizeRecipeName(meal.recipeName))
+    );
+
+    const recipesToCreate = [...usedNewRecipeNames]
+      .map((recipeName) => recipesToCreateByName.get(recipeName))
+      .filter((recipe): recipe is NonNullable<typeof recipe> => Boolean(recipe));
+
+    const usedIngredientNames = new Set<string>();
+    const inferredMealTypesByRecipeName = new Map<string, Set<MealSlot>>();
+
+    for (const meal of normalizedResponse.weeklyPlan) {
+      const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
+      if (meal.recipeId) continue;
+      const slots = inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>();
+      slots.add(meal.mealSlot);
+      inferredMealTypesByRecipeName.set(normalizedRecipeName, slots);
+    }
+
+    for (const recipe of recipesToCreate) {
+      for (const ingredientName of recipe.ingredients) {
+        usedIngredientNames.add(this.normalizeRecipeName(ingredientName));
+      }
+    }
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const ingredientIdsByName = new Map(
+        [...existingIngredientsByName.entries()].map(([name, ingredient]) => [name, ingredient.id])
+      );
+
+      for (const ingredientName of usedIngredientNames) {
+        if (ingredientIdsByName.has(ingredientName)) continue;
+
+        const ingredientDetails = ingredientMetadataByName.get(ingredientName);
+        const createdIngredient = await tx.ingredient.create({
+          data: {
+            name: ingredientDetails?.name.trim() ?? ingredientName,
+            category: ingredientDetails?.category?.trim() || null,
+            familyId,
+            createdById: userId
+          },
+          select: { id: true, name: true }
+        });
+        ingredientIdsByName.set(this.normalizeRecipeName(createdIngredient.name), createdIngredient.id);
+      }
+
+      const recipeIdsByName = new Map(
+        [...existingRecipesByName.entries()].map(([name, recipe]) => [name, recipe.id])
+      );
+
+      for (const recipe of recipesToCreate) {
+        const normalizedRecipeName = this.normalizeRecipeName(recipe.name);
+        if (recipeIdsByName.has(normalizedRecipeName)) continue;
+
+        const ingredientIds = [...new Set(
+          recipe.ingredients
+            .map((ingredientName) => ingredientIdsByName.get(this.normalizeRecipeName(ingredientName)))
+            .filter((value): value is string => Boolean(value))
+        )];
+        const inferredMealTypes = [...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set())];
+
+        const createdRecipe = await tx.recipe.create({
+          data: {
+            name: recipe.name.trim(),
+            description: recipe.description?.trim() || null,
+            mealTypes: recipe.mealTypes?.length ? recipe.mealTypes : inferredMealTypes,
+            familyId,
+            createdById: userId,
+            ingredients: {
+              create: ingredientIds.map((ingredientId) => ({ ingredientId }))
+            }
+          },
+          select: { id: true, name: true }
+        });
+
+        recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+      }
+
+      const date = this.parseWeekStart(weekStart);
+      const menu = await tx.weeklyMenu.upsert({
+        where: { weekStart_familyId: { weekStart: date, familyId } },
+        create: { weekStart: date, familyId },
+        update: {},
+        select: { id: true }
+      });
+
+      const finalMeals = normalizedResponse.weeklyPlan.map((meal) => {
+        const recipeId =
+          meal.recipeId ?? recipeIdsByName.get(this.normalizeRecipeName(meal.recipeName));
+
+        if (!recipeId) {
+          throw new BadRequestException(`Impossibile risolvere la ricetta "${meal.recipeName}" per il salvataggio.`);
+        }
+
+        return {
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeId
+        };
+      });
+
+      const finalMealSlotKeys = new Set(
+        finalMeals.map((meal) => this.getSlotKey(meal.dayOfWeek, meal.mealSlot))
+      );
+
+      const slotsToDelete = normalizedSelectedSlots
+        .filter((slot) => !finalMealSlotKeys.has(this.getSlotKey(slot.dayOfWeek, slot.mealSlot)))
+        .map((slot) => ({ dayOfWeek: slot.dayOfWeek, mealSlot: slot.mealSlot }));
+
+      if (slotsToDelete.length > 0) {
+        await tx.menuMeal.deleteMany({
+          where: {
+            weeklyMenuId: menu.id,
+            OR: slotsToDelete
+          }
+        });
+      }
+
+      for (const meal of finalMeals) {
+        await tx.menuMeal.upsert({
+          where: {
+            weeklyMenuId_dayOfWeek_mealSlot: {
+              weeklyMenuId: menu.id,
+              dayOfWeek: meal.dayOfWeek,
+              mealSlot: meal.mealSlot
+            }
+          },
+          create: {
+            weeklyMenuId: menu.id,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            recipeId: meal.recipeId
+          },
+          update: {
+            recipeId: meal.recipeId,
+            customName: null
+          }
+        });
+      }
+
+      return tx.weeklyMenu.findUnique({
+        where: { id: menu.id },
+        include: {
+          meals: {
+            include: {
+              recipe: {
+                include: {
+                  ingredients: {
+                    include: { ingredient: { select: { id: true, name: true, category: true } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+    });
+  }
+
   private getClient() {
     if (this.client) return this.client;
 
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) throw new BadRequestException("OPENAI_API_KEY non configurata.");
 
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, maxRetries: 0 });
     return this.client;
   }
 
   private validateAiResponse(
     response: AiResponse,
     existingRecipes: { id: string; name: string }[],
-    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[]
+    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    options: { requireCompleteCoverage: boolean }
   ) {
     const requestedSlotKeys = new Set(requestedSlots.map((slot) => this.getSlotKey(slot.dayOfWeek, slot.mealSlot)));
     const returnedSlotKeys = new Set<string>();
@@ -268,7 +485,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
     }
 
-    if (returnedSlotKeys.size !== requestedSlotKeys.size) {
+    if (options.requireCompleteCoverage && returnedSlotKeys.size !== requestedSlotKeys.size) {
       throw new BadRequestException("La risposta AI non copre tutti gli slot richiesti.");
     }
 
@@ -285,7 +502,27 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     return `${dayOfWeek}-${mealSlot}`;
   }
 
+  private normalizeSlots(slots: { dayOfWeek: number; mealSlot: MealSlot }[]) {
+    return [...slots]
+      .filter(
+        (slot, index, items) =>
+          items.findIndex(
+            (candidate) => candidate.dayOfWeek === slot.dayOfWeek && candidate.mealSlot === slot.mealSlot
+          ) === index
+      )
+      .sort((a, b) => {
+        if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+        return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+      });
+  }
+
   private normalizeRecipeName(name: string) {
     return name.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  private parseWeekStart(weekStart: string) {
+    const date = new Date(weekStart);
+    date.setUTCHours(0, 0, 0, 0);
+    return date;
   }
 }

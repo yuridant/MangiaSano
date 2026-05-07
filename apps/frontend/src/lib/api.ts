@@ -4,6 +4,19 @@ function buildApiUrl(path: string) {
   return `${API_URL}/api${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+async function parseResponseBody(response: Response) {
+  if (response.status === 204) return null;
+
+  const text = await response.text();
+  if (!text.trim()) return null;
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
     ...options,
@@ -14,12 +27,19 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
     }
   });
 
+  const payload = await parseResponseBody(response);
+
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ message: "Request failed" }));
-    throw new Error((payload as { message?: string }).message ?? "Request failed");
+    if (payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string") {
+      throw new Error(payload.message);
+    }
+    if (typeof payload === "string" && payload.trim()) {
+      throw new Error(payload);
+    }
+    throw new Error("Request failed");
   }
 
-  return response.json() as Promise<T>;
+  return payload as T;
 }
 
 export const api = {

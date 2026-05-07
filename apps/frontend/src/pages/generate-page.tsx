@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot, WeeklyMenu } from "../types";
+import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot } from "../types";
 import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
@@ -133,75 +133,16 @@ export function GeneratePage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!aiResult) return;
-
-      // 1. Create new ingredients
-      if (aiResult.newIngredients.length > 0) {
-        for (const ing of aiResult.newIngredients) {
-          await api.post(`/ingredients?familyId=${activeFamilyId}`, ing, token!).catch(() => undefined);
-        }
-      }
-
-      // 2. Fetch all ingredients to resolve names -> ids
-      const allIngredients = await api.get<{ id: string; name: string }[]>(
-        `/ingredients?familyId=${activeFamilyId}`,
-        token!
-      );
-      const ingredientByName = new Map(allIngredients.map((i) => [i.name.toLowerCase(), i.id]));
-
-      // 3. Create new recipes
-      const newRecipeIds = new Map<string, string>();
-      for (const recipe of aiResult.newRecipes) {
-        const ingredientIds = recipe.ingredients
-          .map((name) => ingredientByName.get(name.toLowerCase()))
-          .filter(Boolean) as string[];
-
-        const created = await api
-          .post<{ id: string; name: string }>(
-            `/recipes?familyId=${activeFamilyId}`,
-            { ...recipe, ingredientIds },
-            token!
-          )
-          .catch(() => null);
-
-        if (created) newRecipeIds.set(recipe.name.toLowerCase(), created.id);
-      }
-
-      // 4. Fetch all recipes to resolve names -> ids
-      const allRecipes = await api.get<{ id: string; name: string }[]>(
-        `/recipes?familyId=${activeFamilyId}`,
-        token!
-      );
-      const recipeByName = new Map(allRecipes.map((r) => [r.name.toLowerCase(), r.id]));
-
-      // 5. Bulk save meals
-      const meals = planToSave
-        .map((meal) => {
-          const recipeId =
-            meal.recipeId ??
-            newRecipeIds.get(meal.recipeName.toLowerCase()) ??
-            recipeByName.get(meal.recipeName.toLowerCase());
-          if (!recipeId) return null;
-          return { dayOfWeek: meal.dayOfWeek, mealSlot: meal.mealSlot, recipeId };
-        })
-        .filter(Boolean) as { dayOfWeek: number; mealSlot: MealSlot; recipeId: string }[];
-
-      const currentMenu = await api.get<WeeklyMenu | null>(
-        `/menus/${weekStart}?familyId=${activeFamilyId}`,
-        token!
-      );
-      const selectedSlotKeys = new Set(selectedSlots.map((slot) => getSlotKey(slot.dayOfWeek, slot.mealSlot)));
-      const savedMealKeys = new Set(meals.map((meal) => getSlotKey(meal.dayOfWeek, meal.mealSlot)));
-
-      for (const existingMeal of currentMenu?.meals ?? []) {
-        const slotKey = getSlotKey(existingMeal.dayOfWeek, existingMeal.mealSlot);
-        if (selectedSlotKeys.has(slotKey) && !savedMealKeys.has(slotKey)) {
-          await api.delete(`/menus/${weekStart}/meals/${existingMeal.id}?familyId=${activeFamilyId}`, token!);
-        }
-      }
-
-      await api.put(
-        `/menus/${weekStart}/meals?familyId=${activeFamilyId}`,
-        { meals },
+      await api.post(
+        `/ai/apply?familyId=${activeFamilyId}`,
+        {
+          weekStart,
+          selectedSlots,
+          aiResult: {
+            ...aiResult,
+            weeklyPlan: planToSave
+          }
+        },
         token!
       );
     },

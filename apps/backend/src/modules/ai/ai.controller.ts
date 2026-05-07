@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { mealSlotSchema } from "../../common/meal-slots";
 import { AiService } from "./ai.service";
+import { aiResponseSchema } from "./ai.service";
 
 const generateSchema = z.object({
   slots: z.array(
@@ -12,6 +13,19 @@ const generateSchema = z.object({
     })
   ),
   goal: z.string().default("Piano equilibrato con riduzione picchi glicemici")
+});
+
+const applySchema = z.object({
+  weekStart: z.string().min(1),
+  selectedSlots: z.array(
+    z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      mealSlot: mealSlotSchema
+    })
+  ),
+  aiResult: aiResponseSchema.extend({
+    weeklyPlan: aiResponseSchema.shape.weeklyPlan
+  })
 });
 
 type AuthedRequest = { user: { id: string } };
@@ -25,5 +39,11 @@ export class AiController {
   generate(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
     const { slots, goal } = generateSchema.parse(body);
     return this.aiService.generate(req.user.id, familyId, slots, goal);
+  }
+
+  @Post("apply")
+  apply(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
+    const { weekStart, selectedSlots, aiResult } = applySchema.parse(body);
+    return this.aiService.applyGeneratedPlan(req.user.id, familyId, weekStart, selectedSlots, aiResult);
   }
 }
