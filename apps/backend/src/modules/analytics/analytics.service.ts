@@ -1,13 +1,15 @@
 import { Injectable } from "@nestjs/common";
 import { MEAL_SLOT_ORDER } from "../../common/meal-slots";
 import { PrismaService } from "../../prisma/prisma.service";
+import { AiService } from "../ai/ai.service";
 import { FamiliesService } from "../families/families.service";
 
 @Injectable()
 export class AnalyticsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly families: FamiliesService
+    private readonly families: FamiliesService,
+    private readonly aiService: AiService
   ) {}
 
   async getSummary(userId: string, familyId: string) {
@@ -40,7 +42,10 @@ export class AnalyticsService {
         (a, b) => MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot]
       ),
       weeklyCoverage,
-      aiUsage
+      aiUsage: {
+        ...aiUsage,
+        experiment: this.getExperimentConfig()
+      }
     };
   }
 
@@ -130,10 +135,23 @@ export class AnalyticsService {
     const totalOutputTokens = successfulLogs.reduce((sum, log) => sum + (log.outputTokens ?? 0), 0);
 
     const modelBuckets = new Map<string, typeof successfulLogs>();
+    const variantBuckets = new Map<string, typeof successfulLogs>();
     for (const log of successfulLogs) {
       const bucket = modelBuckets.get(log.model) ?? [];
       bucket.push(log);
       modelBuckets.set(log.model, bucket);
+
+      const requestBreakdown = log.requestBreakdown as
+        | {
+            experiment?: { strategy?: string; variant?: string };
+          }
+        | null;
+      const variantKey = requestBreakdown?.experiment?.variant;
+      if (variantKey) {
+        const variantBucket = variantBuckets.get(variantKey) ?? [];
+        variantBucket.push(log);
+        variantBuckets.set(variantKey, variantBucket);
+      }
     }
 
     const sectionTotals = new Map<string, { tokens: number; chars: number }>();
@@ -180,6 +198,24 @@ export class AnalyticsService {
           entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
         )
       })),
+      experimentBreakdown: [...variantBuckets.entries()].map(([variant, entries]) => ({
+        variant,
+        requests: entries.length,
+        averageCostUsd: Number(
+          (
+            entries.reduce((sum, entry) => sum + (entry.estimatedTotalCostUsd ?? 0), 0) / entries.length
+          ).toFixed(6)
+        ),
+        averageRequestedMeals: Number(
+          (entries.reduce((sum, entry) => sum + entry.requestedMealCount, 0) / entries.length).toFixed(1)
+        ),
+        averageInputTokens: Math.round(
+          entries.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0) / entries.length
+        ),
+        averageOutputTokens: Math.round(
+          entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
+        )
+      })),
       sectionAverages: [...sectionTotals.entries()]
         .map(([name, totals]) => ({
           name,
@@ -191,6 +227,12 @@ export class AnalyticsService {
         id: log.id,
         createdAt: log.createdAt.toISOString(),
         model: log.model,
+        experimentVariant:
+          ((log.requestBreakdown as { experiment?: { variant?: string } } | null)?.experiment?.variant ??
+            "primary"),
+        experimentStrategy:
+          ((log.requestBreakdown as { experiment?: { strategy?: string } } | null)?.experiment?.strategy ??
+            "off"),
         success: log.success,
         requestedMealCount: log.requestedMealCount,
         existingRecipeCount: log.existingRecipeCount,
@@ -204,6 +246,15 @@ export class AnalyticsService {
         requestBreakdown: log.requestBreakdown,
         errorMessage: log.errorMessage
       }))
+    };
+  }
+
+  private getExperimentConfig() {
+    const config = this.aiService.getModelConfig();
+    return {
+      mode: config.experimentMode,
+      primaryModel: config.primaryModel,
+      secondaryModel: config.secondaryModel
     };
   }
 }

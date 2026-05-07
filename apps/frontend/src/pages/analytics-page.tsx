@@ -32,6 +32,11 @@ function formatSectionName(name: string) {
   return labels[name] ?? name;
 }
 
+function formatExperimentVariant(variant: string) {
+  if (variant === "secondary") return "B";
+  return "A";
+}
+
 export function AnalyticsPage() {
   const { token, activeFamilyId } = useAuth();
 
@@ -206,6 +211,13 @@ export function AnalyticsPage() {
             <p className="mt-1 text-sm text-slate-500">
               Stima basata sui token registrati e sul modello usato per ogni richiesta.
             </p>
+            <p className="mt-2 text-xs text-slate-400">
+              Modalita attiva: <span className="font-semibold text-ink">{data.aiUsage.experiment.mode}</span>
+              {" • "}
+              A: {data.aiUsage.experiment.primaryModel}
+              {" • "}
+              B: {data.aiUsage.experiment.secondaryModel}
+            </p>
           </div>
           <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Richieste riuscite</p>
@@ -264,6 +276,40 @@ export function AnalyticsPage() {
           </div>
         )}
 
+        {data.aiUsage.experiment.mode !== "off" && data.aiUsage.experimentBreakdown.length > 0 && (
+          <div className="mt-5">
+            <h3 className="mb-3 text-sm font-bold text-ink">Confronto gruppi A/B</h3>
+            <div className="grid gap-3 md:grid-cols-2">
+              {data.aiUsage.experimentBreakdown.map((item) => (
+                <div key={item.variant} className="app-subpanel">
+                  <p className="text-sm font-semibold text-ink">
+                    Gruppo {formatExperimentVariant(item.variant)}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">{item.requests} richieste</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600">
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Costo medio</p>
+                      <p className="mt-1 font-semibold text-ink">{formatUsd(item.averageCostUsd)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Pasti medi</p>
+                      <p className="mt-1 font-semibold text-ink">{item.averageRequestedMeals}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Input medio</p>
+                      <p className="mt-1 font-semibold text-ink">{item.averageInputTokens}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Output medio</p>
+                      <p className="mt-1 font-semibold text-ink">{item.averageOutputTokens}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {data.aiUsage.sectionAverages.length > 0 && (
           <div className="mt-5">
             <h3 className="mb-3 text-sm font-bold text-ink">Peso medio del prompt</h3>
@@ -289,6 +335,7 @@ export function AnalyticsPage() {
                 <thead className="text-xs uppercase tracking-wider text-slate-400">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Data</th>
+                    <th className="px-3 py-2 font-semibold">Gruppo</th>
                     <th className="px-3 py-2 font-semibold">Modello</th>
                     <th className="px-3 py-2 font-semibold">Pasti</th>
                     <th className="px-3 py-2 font-semibold">Input</th>
@@ -307,6 +354,11 @@ export function AnalyticsPage() {
                           hour: "2-digit",
                           minute: "2-digit"
                         })}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {request.experimentStrategy === "off"
+                          ? "Off"
+                          : formatExperimentVariant(request.experimentVariant)}
                       </td>
                       <td className="px-3 py-3 font-medium text-ink">{request.model}</td>
                       <td className="px-3 py-3 text-slate-600">{request.requestedMealCount}</td>

@@ -82,6 +82,14 @@ interface RequestBreakdown {
   };
 }
 
+type OpenAiExperimentMode = "off" | "alternate" | "random";
+
+interface ModelSelection {
+  model: string;
+  strategy: OpenAiExperimentMode;
+  variant: "primary" | "secondary";
+}
+
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
 Principi guida:
@@ -110,10 +118,9 @@ export class AiService {
     goal: string
   ): Promise<AiResponse> {
     await this.families.requireMembership(userId, familyId);
-    const model = this.getModel();
     const startedAt = Date.now();
 
-    const [family, recipes, ingredients] = await Promise.all([
+    const [family, recipes, ingredients, modelSelection] = await Promise.all([
       this.prisma.family.findUniqueOrThrow({
         where: { id: familyId },
         select: {
@@ -129,8 +136,10 @@ export class AiService {
           ingredients: { include: { ingredient: { select: { name: true } } } }
         }
       }),
-      this.prisma.ingredient.findMany({ where: { familyId } })
+      this.prisma.ingredient.findMany({ where: { familyId } }),
+      this.selectModelForRequest(familyId)
     ]);
+    const model = modelSelection.model;
 
     const context = {
       existingRecipes: [...recipes]
@@ -221,6 +230,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         userId,
         familyId,
         model,
+        strategy: modelSelection.strategy,
+        variant: modelSelection.variant,
         requestedMealCount: slots.length,
         existingRecipeCount: context.existingRecipes.length,
         existingIngredientCount: context.existingIngredients.length,
@@ -241,6 +252,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         userId,
         familyId,
         model,
+        strategy: modelSelection.strategy,
+        variant: modelSelection.variant,
         requestedMealCount: slots.length,
         existingRecipeCount: context.existingRecipes.length,
         existingIngredientCount: context.existingIngredients.length,
@@ -505,8 +518,51 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     return this.client;
   }
 
-  private getModel() {
-    return this.config.get<string>("OPENAI_MODEL") ?? DEFAULT_OPENAI_MODEL;
+  getModelConfig() {
+    const primaryModel =
+      this.config.get<string>("OPENAI_MODEL_PRIMARY") ??
+      this.config.get<string>("OPENAI_MODEL") ??
+      DEFAULT_OPENAI_MODEL;
+    const secondaryModel = this.config.get<string>("OPENAI_MODEL_SECONDARY") ?? "gpt-4o-mini";
+    const experimentMode = this.config.get<OpenAiExperimentMode>("OPENAI_EXPERIMENT_MODE") ?? "off";
+
+    return {
+      experimentMode,
+      primaryModel,
+      secondaryModel
+    };
+  }
+
+  private async selectModelForRequest(familyId: string): Promise<ModelSelection> {
+    const { experimentMode, primaryModel, secondaryModel } = this.getModelConfig();
+
+    if (experimentMode === "off" || primaryModel === secondaryModel) {
+      return {
+        model: primaryModel,
+        strategy: experimentMode,
+        variant: "primary"
+      };
+    }
+
+    if (experimentMode === "random") {
+      const useSecondary = Math.random() >= 0.5;
+      return {
+        model: useSecondary ? secondaryModel : primaryModel,
+        strategy: experimentMode,
+        variant: useSecondary ? "secondary" : "primary"
+      };
+    }
+
+    const previousRequests = await this.prisma.aiGenerationLog.count({
+      where: { familyId }
+    });
+    const useSecondary = previousRequests % 2 === 1;
+
+    return {
+      model: useSecondary ? secondaryModel : primaryModel,
+      strategy: experimentMode,
+      variant: useSecondary ? "secondary" : "primary"
+    };
   }
 
   private buildRequestBreakdown(
@@ -547,6 +603,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     userId: string;
     familyId: string;
     model: string;
+    strategy: OpenAiExperimentMode;
+    variant: "primary" | "secondary";
     requestedMealCount: number;
     existingRecipeCount: number;
     existingIngredientCount: number;
@@ -595,7 +653,13 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           latencyMs: params.latencyMs,
           openaiResponseId: params.openaiResponseId,
           errorMessage: params.errorMessage,
-          requestBreakdown: params.requestBreakdown as unknown as Prisma.InputJsonValue,
+          requestBreakdown: {
+            ...(params.requestBreakdown as unknown as Record<string, unknown>),
+            experiment: {
+              strategy: params.strategy,
+              variant: params.variant
+            }
+          } as Prisma.InputJsonValue,
           responseBreakdown: params.responseBreakdown
             ? (params.responseBreakdown as unknown as Prisma.InputJsonValue)
             : undefined

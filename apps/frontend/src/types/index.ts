@@ -129,6 +129,11 @@ export interface AnalyticsSummary {
   mealSlotDistribution: { mealSlot: MealSlot; count: number }[];
   weeklyCoverage: { weekStart: string; mealCount: number; completionRate: number }[];
   aiUsage: {
+    experiment: {
+      mode: "off" | "alternate" | "random";
+      primaryModel: string;
+      secondaryModel: string;
+    };
     totalRequests: number;
     successfulRequests: number;
     averageCostUsd: number;
@@ -144,6 +149,14 @@ export interface AnalyticsSummary {
       averageInputTokens: number;
       averageOutputTokens: number;
     }[];
+    experimentBreakdown: {
+      variant: string;
+      requests: number;
+      averageCostUsd: number;
+      averageRequestedMeals: number;
+      averageInputTokens: number;
+      averageOutputTokens: number;
+    }[];
     sectionAverages: {
       name: string;
       averageTokens: number;
@@ -153,6 +166,8 @@ export interface AnalyticsSummary {
       id: string;
       createdAt: string;
       model: string;
+      experimentVariant: string;
+      experimentStrategy: string;
       success: boolean;
       requestedMealCount: number;
       existingRecipeCount: number;
