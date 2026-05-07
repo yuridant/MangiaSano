@@ -51,6 +51,7 @@ Principi guida:
 - Varia le fonti proteiche (legumi, pesce, carne magra, uova)
 - Includi verdure ad ogni pasto principale
 - Limita zuccheri semplici, pane bianco, riso raffinato
+- Privilegia ingredienti di stagione, soprattutto frutta, verdura e prodotti freschi, così da favorire una spesa locale al mercato e ricette più fresche
 
 IMPORTANTE: Rispondi ESCLUSIVAMENTE con JSON valido. Nessun testo prima o dopo il JSON. Nessun blocco markdown. Solo JSON puro.`;
 
@@ -163,7 +164,11 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       if (!parsed) {
         throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
       }
-      return this.validateAiResponse(parsed, recipes.map((recipe) => recipe.id), slots);
+      return this.validateAiResponse(
+        parsed,
+        recipes.map((recipe) => ({ id: recipe.id, name: recipe.name })),
+        slots
+      );
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
 
@@ -206,15 +211,21 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private validateAiResponse(
     response: AiResponse,
-    existingRecipeIds: string[],
+    existingRecipes: { id: string; name: string }[],
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[]
   ) {
     const requestedSlotKeys = new Set(requestedSlots.map((slot) => this.getSlotKey(slot.dayOfWeek, slot.mealSlot)));
     const returnedSlotKeys = new Set<string>();
-    const existingRecipeIdsSet = new Set(existingRecipeIds);
-    const newRecipeNames = new Set(response.newRecipes.map((recipe) => recipe.name.trim().toLowerCase()));
+    const existingRecipeIdsSet = new Set(existingRecipes.map((recipe) => recipe.id));
+    const existingRecipesByName = new Map(
+      existingRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
+    );
+    const newRecipeNames = new Set(
+      response.newRecipes.map((recipe) => this.normalizeRecipeName(recipe.name))
+    );
+    const normalizedWeeklyPlan = response.weeklyPlan.map((meal) => ({ ...meal }));
 
-    for (const meal of response.weeklyPlan) {
+    for (const meal of normalizedWeeklyPlan) {
       const slotKey = this.getSlotKey(meal.dayOfWeek, meal.mealSlot);
       if (!requestedSlotKeys.has(slotKey)) {
         throw new BadRequestException("La risposta AI contiene slot non richiesti.");
@@ -224,11 +235,35 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
       returnedSlotKeys.add(slotKey);
 
-      if (meal.recipeId && !existingRecipeIdsSet.has(meal.recipeId)) {
+      const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
+      const matchedExistingRecipe = existingRecipesByName.get(normalizedRecipeName);
+
+      if (meal.recipeId) {
+        if (existingRecipeIdsSet.has(meal.recipeId)) {
+          continue;
+        }
+
+        if (matchedExistingRecipe) {
+          meal.recipeId = matchedExistingRecipe.id;
+          meal.recipeName = matchedExistingRecipe.name;
+          continue;
+        }
+
+        if (newRecipeNames.has(normalizedRecipeName)) {
+          delete meal.recipeId;
+          continue;
+        }
+
         throw new BadRequestException("La risposta AI contiene recipeId non presenti nel database.");
       }
 
-      if (!meal.recipeId && !newRecipeNames.has(meal.recipeName.trim().toLowerCase())) {
+      if (matchedExistingRecipe) {
+        meal.recipeId = matchedExistingRecipe.id;
+        meal.recipeName = matchedExistingRecipe.name;
+        continue;
+      }
+
+      if (!newRecipeNames.has(normalizedRecipeName)) {
         throw new BadRequestException("La risposta AI contiene una nuova ricetta non presente in newRecipes.");
       }
     }
@@ -239,7 +274,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
     return {
       ...response,
-      weeklyPlan: [...response.weeklyPlan].sort((a, b) => {
+      weeklyPlan: normalizedWeeklyPlan.sort((a, b) => {
         if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
         return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
       })
@@ -248,5 +283,9 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private getSlotKey(dayOfWeek: number, mealSlot: MealSlot) {
     return `${dayOfWeek}-${mealSlot}`;
+  }
+
+  private normalizeRecipeName(name: string) {
+    return name.trim().replace(/\s+/g, " ").toLowerCase();
   }
 }
