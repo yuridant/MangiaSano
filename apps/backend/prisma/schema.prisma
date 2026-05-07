@@ -19,6 +19,7 @@ model User {
   refreshTokens      RefreshToken[]
   createdIngredients Ingredient[] @relation("IngredientCreatedBy")
   createdRecipes     Recipe[]     @relation("RecipeCreatedBy")
+  aiGenerationLogs   AiGenerationLog[]
 }
 
 model Family {
@@ -35,6 +36,38 @@ model Family {
   recipes       Recipe[]
   weeklyMenus   WeeklyMenu[]
   shoppingLists ShoppingList[]
+  aiGenerationLogs AiGenerationLog[]
+}
+
+model AiGenerationLog {
+  id                    String   @id @default(cuid())
+  userId                String
+  familyId              String
+  weekStart             DateTime?
+  model                 String
+  success               Boolean  @default(false)
+  requestedMealCount    Int
+  existingRecipeCount   Int
+  existingIngredientCount Int
+  inputTokens           Int?
+  cachedInputTokens     Int?
+  outputTokens          Int?
+  totalTokens           Int?
+  estimatedInputCostUsd Float?
+  estimatedOutputCostUsd Float?
+  estimatedTotalCostUsd Float?
+  latencyMs             Int?
+  openaiResponseId      String?
+  errorMessage          String?
+  requestBreakdown      Json?
+  responseBreakdown     Json?
+  createdAt             DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model FamilyMembership {

@@ -13,7 +13,7 @@ export class AnalyticsService {
   async getSummary(userId: string, familyId: string) {
     await this.families.requireMembership(userId, familyId);
 
-    const [topRecipes, topIngredients, mealSlotDistribution, totalMenus, totalRecipes, totalIngredients, totalMealsPlanned, weeklyCoverage] = await Promise.all([
+    const [topRecipes, topIngredients, mealSlotDistribution, totalMenus, totalRecipes, totalIngredients, totalMealsPlanned, weeklyCoverage, aiUsage] = await Promise.all([
       this.getTopRecipes(familyId),
       this.getTopIngredients(familyId),
       this.getMealSlotDistribution(familyId),
@@ -21,7 +21,8 @@ export class AnalyticsService {
       this.prisma.recipe.count({ where: { familyId } }),
       this.prisma.ingredient.count({ where: { familyId } }),
       this.prisma.menuMeal.count({ where: { weeklyMenu: { familyId } } }),
-      this.getWeeklyCoverage(familyId)
+      this.getWeeklyCoverage(familyId),
+      this.getAiUsageSummary(familyId)
     ]);
 
     return {
@@ -38,7 +39,8 @@ export class AnalyticsService {
       mealSlotDistribution: mealSlotDistribution.sort(
         (a, b) => MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot]
       ),
-      weeklyCoverage
+      weeklyCoverage,
+      aiUsage
     };
   }
 
@@ -109,5 +111,99 @@ export class AnalyticsService {
       mealCount: menu._count.meals,
       completionRate: Math.round((menu._count.meals / 35) * 100)
     }));
+  }
+
+  private async getAiUsageSummary(familyId: string) {
+    const logs = await this.prisma.aiGenerationLog.findMany({
+      where: { familyId },
+      orderBy: { createdAt: "desc" },
+      take: 100
+    });
+
+    const successfulLogs = logs.filter((log) => log.success);
+    const totalEstimatedCostUsd = successfulLogs.reduce(
+      (sum, log) => sum + (log.estimatedTotalCostUsd ?? 0),
+      0
+    );
+    const totalRequestedMeals = successfulLogs.reduce((sum, log) => sum + log.requestedMealCount, 0);
+    const totalInputTokens = successfulLogs.reduce((sum, log) => sum + (log.inputTokens ?? 0), 0);
+    const totalOutputTokens = successfulLogs.reduce((sum, log) => sum + (log.outputTokens ?? 0), 0);
+
+    const modelBuckets = new Map<string, typeof successfulLogs>();
+    for (const log of successfulLogs) {
+      const bucket = modelBuckets.get(log.model) ?? [];
+      bucket.push(log);
+      modelBuckets.set(log.model, bucket);
+    }
+
+    const sectionTotals = new Map<string, { tokens: number; chars: number }>();
+    for (const log of successfulLogs) {
+      const requestBreakdown = log.requestBreakdown as
+        | {
+            sections?: { name: string; tokens: number; chars: number }[];
+          }
+        | null;
+      for (const section of requestBreakdown?.sections ?? []) {
+        const current = sectionTotals.get(section.name) ?? { tokens: 0, chars: 0 };
+        current.tokens += section.tokens;
+        current.chars += section.chars;
+        sectionTotals.set(section.name, current);
+      }
+    }
+
+    return {
+      totalRequests: logs.length,
+      successfulRequests: successfulLogs.length,
+      averageCostUsd:
+        successfulLogs.length > 0 ? Number((totalEstimatedCostUsd / successfulLogs.length).toFixed(6)) : 0,
+      totalEstimatedCostUsd: Number(totalEstimatedCostUsd.toFixed(6)),
+      averageInputTokens:
+        successfulLogs.length > 0 ? Math.round(totalInputTokens / successfulLogs.length) : 0,
+      averageOutputTokens:
+        successfulLogs.length > 0 ? Math.round(totalOutputTokens / successfulLogs.length) : 0,
+      averageRequestedMeals:
+        successfulLogs.length > 0 ? Number((totalRequestedMeals / successfulLogs.length).toFixed(1)) : 0,
+      averageCostPerMealUsd:
+        totalRequestedMeals > 0 ? Number((totalEstimatedCostUsd / totalRequestedMeals).toFixed(6)) : 0,
+      modelBreakdown: [...modelBuckets.entries()].map(([model, entries]) => ({
+        model,
+        requests: entries.length,
+        averageCostUsd: Number(
+          (
+            entries.reduce((sum, entry) => sum + (entry.estimatedTotalCostUsd ?? 0), 0) / entries.length
+          ).toFixed(6)
+        ),
+        averageInputTokens: Math.round(
+          entries.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0) / entries.length
+        ),
+        averageOutputTokens: Math.round(
+          entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
+        )
+      })),
+      sectionAverages: [...sectionTotals.entries()]
+        .map(([name, totals]) => ({
+          name,
+          averageTokens: Math.round(totals.tokens / successfulLogs.length),
+          averageChars: Math.round(totals.chars / successfulLogs.length)
+        }))
+        .sort((a, b) => b.averageTokens - a.averageTokens),
+      recentRequests: logs.slice(0, 12).map((log) => ({
+        id: log.id,
+        createdAt: log.createdAt.toISOString(),
+        model: log.model,
+        success: log.success,
+        requestedMealCount: log.requestedMealCount,
+        existingRecipeCount: log.existingRecipeCount,
+        existingIngredientCount: log.existingIngredientCount,
+        inputTokens: log.inputTokens ?? 0,
+        cachedInputTokens: log.cachedInputTokens ?? 0,
+        outputTokens: log.outputTokens ?? 0,
+        totalTokens: log.totalTokens ?? 0,
+        estimatedTotalCostUsd: log.estimatedTotalCostUsd ?? 0,
+        latencyMs: log.latencyMs ?? 0,
+        requestBreakdown: log.requestBreakdown,
+        errorMessage: log.errorMessage
+      }))
+    };
   }
 }

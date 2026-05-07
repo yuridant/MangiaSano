@@ -128,6 +128,45 @@ export interface AnalyticsSummary {
   topIngredients: { ingredientId: string; name: string; count: number }[];
   mealSlotDistribution: { mealSlot: MealSlot; count: number }[];
   weeklyCoverage: { weekStart: string; mealCount: number; completionRate: number }[];
+  aiUsage: {
+    totalRequests: number;
+    successfulRequests: number;
+    averageCostUsd: number;
+    totalEstimatedCostUsd: number;
+    averageInputTokens: number;
+    averageOutputTokens: number;
+    averageRequestedMeals: number;
+    averageCostPerMealUsd: number;
+    modelBreakdown: {
+      model: string;
+      requests: number;
+      averageCostUsd: number;
+      averageInputTokens: number;
+      averageOutputTokens: number;
+    }[];
+    sectionAverages: {
+      name: string;
+      averageTokens: number;
+      averageChars: number;
+    }[];
+    recentRequests: {
+      id: string;
+      createdAt: string;
+      model: string;
+      success: boolean;
+      requestedMealCount: number;
+      existingRecipeCount: number;
+      existingIngredientCount: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      estimatedTotalCostUsd: number;
+      latencyMs: number;
+      requestBreakdown: unknown;
+      errorMessage: string | null;
+    }[];
+  };
 }
 
 export const DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"] as const;

@@ -9,7 +9,10 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+import { encodingForModel } from "js-tiktoken";
 import OpenAI from "openai";
+import type { TiktokenModel } from "js-tiktoken/lite";
+import type { ResponseUsage } from "openai/resources/responses/responses";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from "../../common/meal-slots";
@@ -44,6 +47,41 @@ export const aiResponseSchema = z.object({
 
 export type AiResponse = z.infer<typeof aiResponseSchema>;
 
+const DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06";
+const MODEL_PRICING_USD_PER_1M: Record<string, { input: number; cachedInput: number; output: number }> = {
+  "gpt-4o-2024-08-06": {
+    input: 2.5,
+    cachedInput: 1.25,
+    output: 10
+  },
+  "gpt-4o-mini": {
+    input: 0.15,
+    cachedInput: 0.075,
+    output: 0.6
+  },
+  "gpt-4o-mini-2024-07-18": {
+    input: 0.15,
+    cachedInput: 0.075,
+    output: 0.6
+  }
+};
+
+interface PromptSectionBreakdown {
+  name: string;
+  chars: number;
+  tokens: number;
+}
+
+interface RequestBreakdown {
+  sections: PromptSectionBreakdown[];
+  totals: { chars: number; tokens: number };
+  counts: {
+    requestedMeals: number;
+    existingRecipes: number;
+    existingIngredients: number;
+  };
+}
+
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
 Principi guida:
@@ -72,6 +110,8 @@ export class AiService {
     goal: string
   ): Promise<AiResponse> {
     await this.families.requireMembership(userId, familyId);
+    const model = this.getModel();
+    const startedAt = Date.now();
 
     const [family, recipes, ingredients] = await Promise.all([
       this.prisma.family.findUniqueOrThrow({
@@ -125,32 +165,40 @@ export class AiService {
       .map((slot) => `${dayNames[slot.dayOfWeek]} - ${MEAL_SLOT_LABELS[slot.mealSlot]}`)
       .join(", ");
 
-    const userMessage = `Obiettivo nutrizionale: ${goal}
-
-Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id):
-${JSON.stringify(context.existingRecipes)}
-
-Ingredienti già presenti nell'app:
-${JSON.stringify(context.existingIngredients)}
-
-Profilo alimentare della famiglia da rispettare SEMPRE:
-${JSON.stringify(dietaryProfile)}
-
-Genera un piano per questi slot: ${slotsDescription}
-Slot richiesti in formato strutturato:
-${JSON.stringify(slots)}
-
-Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
+    const promptSections = {
+      goal: `Obiettivo nutrizionale: ${goal}`,
+      existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id):\n${JSON.stringify(context.existingRecipes)}`,
+      existingIngredients: `Ingredienti già presenti nell'app:\n${JSON.stringify(context.existingIngredients)}`,
+      dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(dietaryProfile)}`,
+      requestedSlots: `Genera un piano per questi slot: ${slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(slots)}`,
+      rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
 Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
 Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes.
 Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
 Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
 Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
-Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`;
+Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`
+    };
+    const userMessage = [
+      promptSections.goal,
+      promptSections.existingRecipes,
+      promptSections.existingIngredients,
+      promptSections.dietaryProfile,
+      promptSections.requestedSlots,
+      promptSections.rules
+    ].join("\n\n");
+    const requestBreakdown = this.buildRequestBreakdown(model, {
+      systemPrompt: SYSTEM_PROMPT,
+      ...promptSections
+    }, {
+      requestedMeals: slots.length,
+      existingRecipes: context.existingRecipes.length,
+      existingIngredients: context.existingIngredients.length
+    });
 
     try {
       const response = await this.getClient().responses.parse({
-        model: "gpt-4o-2024-08-06",
+        model,
         instructions: SYSTEM_PROMPT,
         input: userMessage,
         text: {
@@ -163,13 +211,45 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       if (!parsed) {
         throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
       }
-      return this.validateAiResponse(
+      const validated = this.validateAiResponse(
         parsed,
         recipes.map((recipe) => ({ id: recipe.id, name: recipe.name })),
         slots,
         { requireCompleteCoverage: true }
       );
+      await this.logGeneration({
+        userId,
+        familyId,
+        model,
+        requestedMealCount: slots.length,
+        existingRecipeCount: context.existingRecipes.length,
+        existingIngredientCount: context.existingIngredients.length,
+        requestBreakdown,
+        responseBreakdown: {
+          weeklyPlanCount: validated.weeklyPlan.length,
+          newRecipesCount: validated.newRecipes.length,
+          newIngredientsCount: validated.newIngredients.length
+        },
+        usage: response.usage,
+        success: true,
+        latencyMs: Date.now() - startedAt,
+        openaiResponseId: response.id
+      });
+      return validated;
     } catch (error) {
+      await this.logGeneration({
+        userId,
+        familyId,
+        model,
+        requestedMealCount: slots.length,
+        existingRecipeCount: context.existingRecipes.length,
+        existingIngredientCount: context.existingIngredients.length,
+        requestBreakdown,
+        success: false,
+        latencyMs: Date.now() - startedAt,
+        errorMessage: error instanceof Error ? error.message : "Errore imprevisto"
+      });
+
       if (error instanceof BadRequestException) throw error;
 
       this.logger.error(
@@ -423,6 +503,127 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
     this.client = new OpenAI({ apiKey, maxRetries: 0 });
     return this.client;
+  }
+
+  private getModel() {
+    return this.config.get<string>("OPENAI_MODEL") ?? DEFAULT_OPENAI_MODEL;
+  }
+
+  private buildRequestBreakdown(
+    model: string,
+    sections: Record<string, string>,
+    counts: RequestBreakdown["counts"]
+  ): RequestBreakdown {
+    const encoder = this.getTokenizer(model);
+    const breakdownSections = Object.entries(sections).map(([name, value]) => ({
+      name,
+      chars: value.length,
+      tokens: encoder.encode(value).length
+    }));
+    const totals = breakdownSections.reduce(
+      (acc, section) => ({
+        chars: acc.chars + section.chars,
+        tokens: acc.tokens + section.tokens
+      }),
+      { chars: 0, tokens: 0 }
+    );
+
+    return {
+      sections: breakdownSections,
+      totals,
+      counts
+    };
+  }
+
+  private getTokenizer(model: string) {
+    try {
+      return encodingForModel(model as TiktokenModel);
+    } catch {
+      return encodingForModel("gpt-4o");
+    }
+  }
+
+  private async logGeneration(params: {
+    userId: string;
+    familyId: string;
+    model: string;
+    requestedMealCount: number;
+    existingRecipeCount: number;
+    existingIngredientCount: number;
+    requestBreakdown: RequestBreakdown;
+    responseBreakdown?: Record<string, number>;
+    usage?: ResponseUsage;
+    success: boolean;
+    latencyMs: number;
+    openaiResponseId?: string;
+    errorMessage?: string;
+  }) {
+    try {
+      const pricing = this.getPricingForModel(params.model);
+      const usage = params.usage;
+      const inputTokens = usage?.input_tokens ?? null;
+      const cachedInputTokens = usage?.input_tokens_details?.cached_tokens ?? 0;
+      const outputTokens = usage?.output_tokens ?? null;
+      const billableInputTokens = inputTokens === null ? null : Math.max(inputTokens - cachedInputTokens, 0);
+      const estimatedInputCostUsd =
+        billableInputTokens === null
+          ? null
+          : Number((((billableInputTokens / 1_000_000) * pricing.input) + ((cachedInputTokens / 1_000_000) * pricing.cachedInput)).toFixed(6));
+      const estimatedOutputCostUsd =
+        outputTokens === null ? null : Number((((outputTokens / 1_000_000) * pricing.output)).toFixed(6));
+      const estimatedTotalCostUsd =
+        estimatedInputCostUsd === null || estimatedOutputCostUsd === null
+          ? null
+          : Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6));
+
+      await this.prisma.aiGenerationLog.create({
+        data: {
+          userId: params.userId,
+          familyId: params.familyId,
+          model: params.model,
+          success: params.success,
+          requestedMealCount: params.requestedMealCount,
+          existingRecipeCount: params.existingRecipeCount,
+          existingIngredientCount: params.existingIngredientCount,
+          inputTokens,
+          cachedInputTokens,
+          outputTokens,
+          totalTokens: usage?.total_tokens ?? null,
+          estimatedInputCostUsd,
+          estimatedOutputCostUsd,
+          estimatedTotalCostUsd,
+          latencyMs: params.latencyMs,
+          openaiResponseId: params.openaiResponseId,
+          errorMessage: params.errorMessage,
+          requestBreakdown: params.requestBreakdown as unknown as Prisma.InputJsonValue,
+          responseBreakdown: params.responseBreakdown
+            ? (params.responseBreakdown as unknown as Prisma.InputJsonValue)
+            : undefined
+        }
+      });
+    } catch (loggingError) {
+      this.logger.warn(
+        `Impossibile salvare il log AI: ${
+          loggingError instanceof Error ? loggingError.message : "errore sconosciuto"
+        }`
+      );
+    }
+  }
+
+  private getPricingForModel(model: string) {
+    const configuredInput = this.config.get<number>("OPENAI_PRICE_INPUT_PER_1M");
+    const configuredCachedInput = this.config.get<number>("OPENAI_PRICE_CACHED_INPUT_PER_1M");
+    const configuredOutput = this.config.get<number>("OPENAI_PRICE_OUTPUT_PER_1M");
+
+    if (configuredInput && configuredCachedInput && configuredOutput) {
+      return {
+        input: configuredInput,
+        cachedInput: configuredCachedInput,
+        output: configuredOutput
+      };
+    }
+
+    return MODEL_PRICING_USD_PER_1M[model] ?? MODEL_PRICING_USD_PER_1M[DEFAULT_OPENAI_MODEL];
   }
 
   private validateAiResponse(
