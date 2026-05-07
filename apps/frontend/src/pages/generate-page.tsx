@@ -500,33 +500,37 @@ export function GeneratePage() {
 
       {overwriteWarningOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
-          <div className="w-full max-w-2xl rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-600">
-              Conferma sovrascrittura
-            </p>
-            <h2 className="mt-2 text-xl font-bold text-ink">
-              Stai per sovrascrivere pasti gi&agrave; assegnati
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              L&apos;AI rigenerer&agrave; i seguenti slot della settimana selezionata.
-            </p>
-
-            <div className="mt-5 space-y-3">
-              {overlappingMealsByDay.map((entry) => (
-                <div key={entry.day} className="rounded-2xl bg-amber-50/80 px-4 py-4">
-                  <p className="text-sm font-semibold text-ink">{entry.day}</p>
-                  <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600">
-                    {entry.meals.map((meal) => (
-                      <p key={meal.id}>
-                        {SLOT_LABELS[meal.mealSlot]}: {meal.recipe?.name ?? meal.customName ?? "—"}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ))}
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
+            <div className="shrink-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-600">
+                Conferma sovrascrittura
+              </p>
+              <h2 className="mt-2 text-xl font-bold text-ink">
+                Stai per sovrascrivere pasti gi&agrave; assegnati
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                L&apos;AI rigenerer&agrave; i seguenti slot della settimana selezionata.
+              </p>
             </div>
 
-            <div className="mt-6 flex gap-3">
+            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="space-y-3">
+                {overlappingMealsByDay.map((entry) => (
+                  <div key={entry.day} className="rounded-2xl bg-amber-50/80 px-4 py-4">
+                    <p className="text-sm font-semibold text-ink">{entry.day}</p>
+                    <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600">
+                      {entry.meals.map((meal) => (
+                        <p key={meal.id}>
+                          {SLOT_LABELS[meal.mealSlot]}: {meal.recipe?.name ?? meal.customName ?? "—"}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-6 flex shrink-0 gap-3">
               <button
                 type="button"
                 onClick={() => setOverwriteWarningOpen(false)}
