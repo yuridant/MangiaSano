@@ -1,14 +1,18 @@
-import type { WeeklyMenu } from "../../types";
+import type { MealSlot, MenuMeal, WeeklyMenu } from "../../types";
 import { DAYS, SLOT_LABELS, SLOTS } from "../../types";
 
 interface WeekGridProps {
-  menu: WeeklyMenu;
+  menu?: WeeklyMenu | null;
+  meals?: MenuMeal[];
   weekStart: string;
+  selectedSlots?: Set<string>;
+  onCellClick?: (dayOfWeek: number, mealSlot: MealSlot, meal: MenuMeal | null) => void;
 }
 
-export function WeekGrid({ menu, weekStart }: WeekGridProps) {
-  const mealsByDayAndSlot = new Map<string, (typeof menu.meals)[0]>();
-  for (const meal of menu.meals) {
+export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }: WeekGridProps) {
+  const sourceMeals = meals ?? menu?.meals ?? [];
+  const mealsByDayAndSlot = new Map<string, MenuMeal>();
+  for (const meal of sourceMeals) {
     mealsByDayAndSlot.set(`${meal.dayOfWeek}-${meal.mealSlot}`, meal);
   }
 
@@ -38,15 +42,37 @@ export function WeekGrid({ menu, weekStart }: WeekGridProps) {
             </div>
             {DAYS.map((_, dayIndex) => {
               const meal = mealsByDayAndSlot.get(`${dayIndex}-${slot}`);
+              const slotKey = `${dayIndex}-${slot}`;
+              const isFilled = Boolean(meal);
+              const isSelected = selectedSlots?.has(slotKey) ?? false;
+              const cellClasses = isFilled
+                ? isSelected
+                  ? "border-sage bg-sage text-white shadow-[0_12px_24px_rgba(85,139,103,0.24)]"
+                  : "border-sage/30 bg-sage/14 text-sage shadow-[0_8px_18px_rgba(85,139,103,0.12)]"
+                : isSelected
+                  ? "border-sage bg-sage/18 text-sage"
+                  : "border-dashed border-slate-200 bg-slate-50 text-slate-300";
+
               return (
-                <div
+                <button
                   key={dayIndex}
-                  className={`min-h-[52px] rounded-xl p-1.5 text-center text-[10px] font-medium leading-tight ${
-                    meal ? "bg-sage/10 text-sage" : "bg-slate-50 text-slate-300"
-                  }`}
+                  type="button"
+                  onClick={() => onCellClick?.(dayIndex, slot, meal ?? null)}
+                  className={`min-h-[62px] rounded-2xl border px-2 py-2 text-center text-[10px] font-medium leading-tight transition ${
+                    cellClasses
+                  } ${onCellClick ? "hover:-translate-y-[1px]" : "cursor-default"}`}
                 >
-                  {meal ? (meal.recipe?.name ?? meal.customName ?? "—") : "·"}
-                </div>
+                  {meal ? (
+                    <div className="flex h-full flex-col items-center justify-center gap-1">
+                      <span className="text-[9px] uppercase tracking-[0.16em] opacity-65">Assegnato</span>
+                      <span className="line-clamp-3 text-[11px] font-semibold leading-tight">
+                        {meal.recipe?.name ?? meal.customName ?? "—"}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-base leading-none">+</span>
+                  )}
+                </button>
               );
             })}
           </div>

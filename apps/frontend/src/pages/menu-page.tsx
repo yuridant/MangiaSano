@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ManualWeekPlanner } from "../components/menu/ManualWeekPlanner";
 import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { MealSlot, Recipe, WeeklyMenu } from "../types";
-import { DAYS_FULL, SLOT_LABELS, SLOTS } from "../types";
+import { DAYS_FULL, SLOT_LABELS } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
@@ -191,49 +190,35 @@ export function MenuPage() {
         </div>
       </div>
 
-      <div className="app-panel">
-        <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h2 className="font-bold text-ink">Gestione manuale pasti</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Seleziona una cella della settimana per aprire subito l&apos;editor del pasto.
+              Clicca una casella del menu per aggiungere, modificare o eliminare il pasto di quello slot.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={resetManualForm}
-            className="text-xs text-slate-400 hover:text-ink"
-          >
-            Reset
-          </button>
         </div>
 
-        <div className="mt-4">
-          <ManualWeekPlanner
-            meals={meals}
-            selectedDayOfWeek={dayOfWeek}
-            selectedMealSlot={mealSlot}
-            onSelect={(nextDayOfWeek, nextMealSlot) => {
-              const existingMeal = meals.find(
-                (meal) => meal.dayOfWeek === nextDayOfWeek && meal.mealSlot === nextMealSlot
-              );
+        <WeekGrid
+          meals={meals}
+          weekStart={weekStart}
+          onCellClick={(nextDayOfWeek, nextMealSlot, meal) => {
+            if (meal) {
+              startEditMeal(meal);
+              return;
+            }
 
-              if (existingMeal) {
-                startEditMeal(existingMeal);
-                return;
-              }
-
-              setDayOfWeek(nextDayOfWeek);
-              setMealSlot(nextMealSlot);
-              setMode("recipe");
-              setRecipeId("");
-              setCustomName("");
-              setManualError("");
-              setEditingMealId(null);
-              setManualModalOpen(true);
-            }}
-          />
-        </div>
+            setDayOfWeek(nextDayOfWeek);
+            setMealSlot(nextMealSlot);
+            setMode("recipe");
+            setRecipeId("");
+            setCustomName("");
+            setManualError("");
+            setEditingMealId(null);
+            setManualModalOpen(true);
+          }}
+        />
       </div>
 
       {manualModalOpen && (
@@ -358,15 +343,13 @@ export function MenuPage() {
 
       {menuQuery.isSuccess && !menuQuery.data && (
         <div className="app-panel text-center">
-          <p className="text-slate-500">Nessun menu per questa settimana.</p>
+          <p className="text-slate-500">
+            Nessun pasto ancora assegnato per questa settimana. Puoi riempire la tabella manualmente oppure usare l&apos;AI.
+          </p>
           <Link to={`/menu/generate?weekStart=${weekStart}`} className="app-btn app-btn-sage mt-4 inline-flex">
             Genera menu con AI
           </Link>
         </div>
-      )}
-
-      {menuQuery.isSuccess && menuQuery.data && (
-        <WeekGrid menu={menuQuery.data} weekStart={weekStart} />
       )}
     </div>
   );

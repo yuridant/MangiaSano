@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot } from "../types";
+import type { AiMealPlan, AiResponse, FamilyDetail, MealSlot, WeeklyMenu } from "../types";
 import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
@@ -43,6 +44,7 @@ export function GeneratePage() {
   const [goal, setGoal] = useState("Piano equilibrato con riduzione picchi glicemici");
   const [error, setError] = useState("");
   const [step, setStep] = useState<"select" | "preview">("select");
+  const [overwriteWarningOpen, setOverwriteWarningOpen] = useState(false);
 
   const requestedWeekStart = searchParams.get("weekStart");
   const parsedWeekStart =
@@ -56,12 +58,19 @@ export function GeneratePage() {
     queryFn: () => api.get<FamilyDetail>(`/families/${activeFamilyId}`, token!),
     enabled: !!token && !!activeFamilyId
   });
+  const menuQuery = useQuery({
+    queryKey: ["menu", activeFamilyId, weekStart],
+    queryFn: () => api.get<WeeklyMenu | null>(`/menus/${weekStart}?familyId=${activeFamilyId}`, token!),
+    enabled: !!token && !!activeFamilyId
+  });
 
   useEffect(() => {
     setAiResult(null);
     setPlanToSave([]);
+    setSelectedSlots([]);
     setError("");
     setStep("select");
+    setOverwriteWarningOpen(false);
   }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
@@ -132,6 +141,25 @@ export function GeneratePage() {
   };
 
   const isCurrentWeek = getMonday(new Date()).toISOString().split("T")[0] === weekStart;
+  const assignedMeals = menuQuery.data?.meals ?? [];
+  const selectedSlotSet = new Set(selectedSlots.map((slot) => getSlotKey(slot.dayOfWeek, slot.mealSlot)));
+  const overlappingMeals = assignedMeals.filter((meal) =>
+    selectedSlotSet.has(getSlotKey(meal.dayOfWeek, meal.mealSlot))
+  );
+
+  const overlappingMealsByDay = DAYS_FULL.map((day, dayOfWeek) => ({
+    day,
+    meals: overlappingMeals.filter((meal) => meal.dayOfWeek === dayOfWeek)
+  })).filter((entry) => entry.meals.length > 0);
+
+  const startGeneration = () => {
+    setError("");
+    if (overlappingMeals.length > 0) {
+      setOverwriteWarningOpen(true);
+      return;
+    }
+    generateMutation.mutate();
+  };
 
   const generateMutation = useMutation({
     mutationFn: () =>
@@ -421,46 +449,24 @@ export function GeneratePage() {
       </div>
 
       {/* Slot grid */}
-      <div className="app-panel overflow-x-auto p-4">
-        <div className="min-w-[480px]">
-          <div className="mb-2 grid grid-cols-[70px_repeat(7,1fr)] gap-1">
-            <div />
-            {DAYS_FULL.map((day) => (
-              <div key={day} className="text-center text-[10px] font-bold text-slate-400">
-                {day.slice(0, 3)}
-              </div>
-            ))}
-          </div>
-
-          {SLOTS.map((slot) => (
-            <div key={slot} className="mb-1 grid grid-cols-[70px_repeat(7,1fr)] gap-1">
-              <div className="flex items-center">
-                <span className="text-xs font-semibold text-slate-400">{SLOT_LABELS[slot]}</span>
-              </div>
-              {DAYS_FULL.map((_, dayIndex) => (
-                <button
-                  key={dayIndex}
-                  type="button"
-                  onClick={() => toggleSlot(dayIndex, slot)}
-                  className={`h-10 rounded-xl text-xs font-semibold transition-colors ${
-                    isSelected(dayIndex, slot)
-                      ? "bg-sage text-white"
-                      : "bg-slate-50 text-slate-300 hover:bg-sage/20"
-                  }`}
-                >
-                  {isSelected(dayIndex, slot) ? "✓" : "+"}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
+      <WeekGrid
+        meals={assignedMeals}
+        weekStart={weekStart}
+        selectedSlots={selectedSlotSet}
+        onCellClick={(dayOfWeek, mealSlot) => toggleSlot(dayOfWeek, mealSlot)}
+      />
 
       <p className="text-center text-sm text-slate-500">
         {selectedSlots.length === 0
           ? "Seleziona almeno un pasto"
           : `${selectedSlots.length} pasti selezionati`}
       </p>
+
+      {overlappingMeals.length > 0 && (
+        <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          La selezione include {overlappingMeals.length} pasti già assegnati: se continui con l&apos;AI, quei pasti verranno sovrascritti.
+        </p>
+      )}
 
       {error && (
         <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
@@ -474,12 +480,63 @@ export function GeneratePage() {
 
       <button
         type="button"
-        onClick={() => { setError(""); generateMutation.mutate(); }}
+        onClick={startGeneration}
         disabled={selectedSlots.length === 0 || generateMutation.isPending || !goal.trim()}
         className="app-btn app-btn-sage w-full disabled:opacity-60"
       >
         {generateMutation.isPending ? "Generazione in corso..." : "🤖 Genera con AI"}
       </button>
+
+      {overwriteWarningOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
+          <div className="w-full max-w-2xl rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-600">
+              Conferma sovrascrittura
+            </p>
+            <h2 className="mt-2 text-xl font-bold text-ink">
+              Stai per sovrascrivere pasti gi&agrave; assegnati
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              L&apos;AI rigenerer&agrave; i seguenti slot della settimana selezionata.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              {overlappingMealsByDay.map((entry) => (
+                <div key={entry.day} className="rounded-2xl bg-amber-50/80 px-4 py-4">
+                  <p className="text-sm font-semibold text-ink">{entry.day}</p>
+                  <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600">
+                    {entry.meals.map((meal) => (
+                      <p key={meal.id}>
+                        {SLOT_LABELS[meal.mealSlot]}: {meal.recipe?.name ?? meal.customName ?? "—"}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setOverwriteWarningOpen(false)}
+                className="app-btn app-btn-secondary flex-1"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOverwriteWarningOpen(false);
+                  generateMutation.mutate();
+                }}
+                className="app-btn app-btn-sage flex-1"
+              >
+                Conferma e genera
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
