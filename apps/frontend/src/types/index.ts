@@ -157,6 +157,15 @@ export interface AnalyticsSummary {
       averageInputTokens: number;
       averageOutputTokens: number;
     }[];
+    experimentVerdict: {
+      status: "insufficient_data" | "watch" | "winner_a" | "winner_b" | "close";
+      summary: string;
+      recommendation: string;
+      costDeltaPct: number | null;
+      costPerMealDeltaPct: number | null;
+      requestedMealsGap: number | null;
+      sampleSizeOk: boolean;
+    };
     sectionAverages: {
       name: string;
       averageTokens: number;

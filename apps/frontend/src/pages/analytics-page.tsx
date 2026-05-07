@@ -37,6 +37,27 @@ function formatExperimentVariant(variant: string) {
   return "A";
 }
 
+function formatSignedPercent(value: number | null) {
+  if (value === null) return "n/d";
+  if (value === 0) return "0%";
+  return `${value > 0 ? "+" : ""}${value}%`;
+}
+
+function getVerdictStyle(status: AnalyticsSummary["aiUsage"]["experimentVerdict"]["status"]) {
+  switch (status) {
+    case "winner_b":
+      return "border-emerald-200 bg-emerald-50/90";
+    case "winner_a":
+      return "border-sky-200 bg-sky-50/90";
+    case "watch":
+      return "border-amber-200 bg-amber-50/90";
+    case "close":
+      return "border-slate-200 bg-slate-50/90";
+    default:
+      return "border-slate-200 bg-slate-50/90";
+  }
+}
+
 export function AnalyticsPage() {
   const { token, activeFamilyId } = useAuth();
 
@@ -279,6 +300,31 @@ export function AnalyticsPage() {
         {data.aiUsage.experiment.mode !== "off" && data.aiUsage.experimentBreakdown.length > 0 && (
           <div className="mt-5">
             <h3 className="mb-3 text-sm font-bold text-ink">Confronto gruppi A/B</h3>
+            <div className={`mb-3 rounded-3xl border px-4 py-4 ${getVerdictStyle(data.aiUsage.experimentVerdict.status)}`}>
+              <p className="text-sm font-semibold text-ink">Verdetto automatico</p>
+              <p className="mt-1 text-sm text-slate-600">{data.aiUsage.experimentVerdict.summary}</p>
+              <p className="mt-2 text-sm text-slate-600">{data.aiUsage.experimentVerdict.recommendation}</p>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                <div className="rounded-2xl bg-white/80 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta costo richiesta B vs A</p>
+                  <p className="mt-1 font-semibold text-ink">
+                    {formatSignedPercent(data.aiUsage.experimentVerdict.costDeltaPct)}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white/80 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta costo per pasto B vs A</p>
+                  <p className="mt-1 font-semibold text-ink">
+                    {formatSignedPercent(data.aiUsage.experimentVerdict.costPerMealDeltaPct)}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white/80 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Gap pasti medi</p>
+                  <p className="mt-1 font-semibold text-ink">
+                    {data.aiUsage.experimentVerdict.requestedMealsGap ?? "n/d"}
+                  </p>
+                </div>
+              </div>
+            </div>
             <div className="grid gap-3 md:grid-cols-2">
               {data.aiUsage.experimentBreakdown.map((item) => (
                 <div key={item.variant} className="app-subpanel">

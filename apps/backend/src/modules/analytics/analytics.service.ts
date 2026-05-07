@@ -169,6 +169,25 @@ export class AnalyticsService {
       }
     }
 
+    const experimentBreakdown = [...variantBuckets.entries()].map(([variant, entries]) => ({
+      variant,
+      requests: entries.length,
+      averageCostUsd: Number(
+        (
+          entries.reduce((sum, entry) => sum + (entry.estimatedTotalCostUsd ?? 0), 0) / entries.length
+        ).toFixed(6)
+      ),
+      averageRequestedMeals: Number(
+        (entries.reduce((sum, entry) => sum + entry.requestedMealCount, 0) / entries.length).toFixed(1)
+      ),
+      averageInputTokens: Math.round(
+        entries.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0) / entries.length
+      ),
+      averageOutputTokens: Math.round(
+        entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
+      )
+    }));
+
     return {
       totalRequests: logs.length,
       successfulRequests: successfulLogs.length,
@@ -198,24 +217,8 @@ export class AnalyticsService {
           entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
         )
       })),
-      experimentBreakdown: [...variantBuckets.entries()].map(([variant, entries]) => ({
-        variant,
-        requests: entries.length,
-        averageCostUsd: Number(
-          (
-            entries.reduce((sum, entry) => sum + (entry.estimatedTotalCostUsd ?? 0), 0) / entries.length
-          ).toFixed(6)
-        ),
-        averageRequestedMeals: Number(
-          (entries.reduce((sum, entry) => sum + entry.requestedMealCount, 0) / entries.length).toFixed(1)
-        ),
-        averageInputTokens: Math.round(
-          entries.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0) / entries.length
-        ),
-        averageOutputTokens: Math.round(
-          entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
-        )
-      })),
+      experimentBreakdown,
+      experimentVerdict: this.buildExperimentVerdict(experimentBreakdown),
       sectionAverages: [...sectionTotals.entries()]
         .map(([name, totals]) => ({
           name,
@@ -256,5 +259,99 @@ export class AnalyticsService {
       primaryModel: config.primaryModel,
       secondaryModel: config.secondaryModel
     };
+  }
+
+  private buildExperimentVerdict(
+    experimentBreakdown: {
+      variant: string;
+      requests: number;
+      averageCostUsd: number;
+      averageRequestedMeals: number;
+      averageInputTokens: number;
+      averageOutputTokens: number;
+    }[]
+  ) {
+    const groupA = experimentBreakdown.find((entry) => entry.variant === "primary");
+    const groupB = experimentBreakdown.find((entry) => entry.variant === "secondary");
+
+    if (!groupA || !groupB) {
+      return {
+        status: "insufficient_data",
+        summary: "Servono richieste in entrambi i gruppi A e B per formulare un verdetto.",
+        recommendation: "Continua il test finché entrambi i gruppi hanno abbastanza richieste.",
+        costDeltaPct: null,
+        costPerMealDeltaPct: null,
+        requestedMealsGap: null,
+        sampleSizeOk: false
+      } as const;
+    }
+
+    const averageCostPerMealA =
+      groupA.averageRequestedMeals > 0 ? groupA.averageCostUsd / groupA.averageRequestedMeals : 0;
+    const averageCostPerMealB =
+      groupB.averageRequestedMeals > 0 ? groupB.averageCostUsd / groupB.averageRequestedMeals : 0;
+    const costDeltaPct =
+      groupA.averageCostUsd > 0
+        ? Number((((groupB.averageCostUsd - groupA.averageCostUsd) / groupA.averageCostUsd) * 100).toFixed(1))
+        : null;
+    const costPerMealDeltaPct =
+      averageCostPerMealA > 0
+        ? Number((((averageCostPerMealB - averageCostPerMealA) / averageCostPerMealA) * 100).toFixed(1))
+        : null;
+    const requestedMealsGap = Number(
+      Math.abs(groupA.averageRequestedMeals - groupB.averageRequestedMeals).toFixed(1)
+    );
+    const balancedSamples = Math.abs(groupA.requests - groupB.requests) <= 1;
+    const enoughSamples = groupA.requests >= 10 && groupB.requests >= 10;
+    const comparableMealLoad = requestedMealsGap <= 1.5;
+    const sampleSizeOk = balancedSamples && enoughSamples && comparableMealLoad;
+
+    if (!sampleSizeOk) {
+      return {
+        status: "watch",
+        summary: "Il confronto A/B e già leggibile, ma il campione non è ancora abbastanza stabile.",
+        recommendation:
+          "Raccogli almeno 10 richieste riuscite per gruppo con carico pasti simile prima di decidere un modello definitivo.",
+        costDeltaPct,
+        costPerMealDeltaPct,
+        requestedMealsGap,
+        sampleSizeOk
+      } as const;
+    }
+
+    if ((costPerMealDeltaPct ?? 0) <= -15) {
+      return {
+        status: "winner_b",
+        summary: "Il gruppo B sta riducendo il costo per pasto in modo significativo a parità quasi di carico.",
+        recommendation: "Puoi considerare il modello B come nuovo default, tenendo monitorata la qualità percepita.",
+        costDeltaPct,
+        costPerMealDeltaPct,
+        requestedMealsGap,
+        sampleSizeOk
+      } as const;
+    }
+
+    if ((costPerMealDeltaPct ?? 0) >= 15) {
+      return {
+        status: "winner_a",
+        summary: "Il gruppo A resta più efficiente del gruppo B sul costo per pasto.",
+        recommendation: "Mantieni il modello A come default e usa il B solo se porta un vantaggio qualitativo evidente.",
+        costDeltaPct,
+        costPerMealDeltaPct,
+        requestedMealsGap,
+        sampleSizeOk
+      } as const;
+    }
+
+    return {
+      status: "close",
+      summary: "I due gruppi hanno costi molto vicini: il risparmio non è ancora abbastanza netto.",
+      recommendation:
+        "Scegli in base alla qualità percepita oppure continua il test per aumentare la confidenza statistica.",
+      costDeltaPct,
+      costPerMealDeltaPct,
+      requestedMealsGap,
+      sampleSizeOk
+    } as const;
   }
 }
