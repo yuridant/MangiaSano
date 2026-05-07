@@ -9,10 +9,10 @@ import { DAYS_FULL, SLOT_LABELS } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
-  const day = d.getUTCDay();
+  const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
   return d;
 }
 

@@ -9,11 +9,17 @@ import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
-  const day = d.getUTCDay();
+  const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function formatWeekRange(weekStart: string) {
+  const start = new Date(`${weekStart}T00:00:00`);
+  const end = new Date(start.getTime() + 6 * 86400000);
+  return `${start.toLocaleDateString("it-IT", { day: "numeric", month: "short" })} — ${end.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" })}`;
 }
 
 interface SelectedSlot {
@@ -318,13 +324,7 @@ export function GeneratePage() {
             ← Prec.
           </button>
           <div className="flex-1 text-center">
-            <p className="text-sm font-semibold text-ink">
-              {new Date(weekStart + "T00:00:00").toLocaleDateString("it-IT", {
-                day: "numeric",
-                month: "long",
-                year: "numeric"
-              })}
-            </p>
+            <p className="text-sm font-semibold text-ink">{formatWeekRange(weekStart)}</p>
             {isCurrentWeek && (
               <span className="text-xs font-medium text-sage">Settimana corrente</span>
             )}

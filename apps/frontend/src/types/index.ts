@@ -116,10 +116,18 @@ export interface AiResponse {
 }
 
 export interface AnalyticsSummary {
+  overview: {
+    totalMenus: number;
+    totalRecipes: number;
+    totalIngredients: number;
+    totalMealsPlanned: number;
+    averageMealsPerMenu: number;
+    completionRate: number;
+  };
   topRecipes: { recipeId: string; name: string; count: number }[];
   topIngredients: { ingredientId: string; name: string; count: number }[];
   mealSlotDistribution: { mealSlot: MealSlot; count: number }[];
-  totalMenus: number;
+  weeklyCoverage: { weekStart: string; mealCount: number; completionRate: number }[];
 }
 
 export const DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"] as const;

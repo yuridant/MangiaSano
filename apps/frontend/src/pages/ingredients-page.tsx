@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { buildSmartSearchText, getSmartSearchScore } from "../lib/smart-search";
 import type { Ingredient } from "../types";
 
 export function IngredientsPage() {
@@ -11,6 +12,7 @@ export function IngredientsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
 
   const ingredientsQuery = useQuery({
@@ -70,14 +72,39 @@ export function IngredientsPage() {
     }
   };
 
-  const grouped = (ingredientsQuery.data ?? []).reduce<Record<string, Ingredient[]>>((acc, ing) => {
-    const key = ing.category ?? "Altro";
+  const draftSearch = buildSmartSearchText(name, category);
+  const activeSearch = search.trim() || (showForm ? draftSearch : "");
+  const scoredIngredients = (ingredientsQuery.data ?? [])
+    .map((ingredient) => ({
+      ingredient,
+      score: getSmartSearchScore(activeSearch, buildSmartSearchText(ingredient.name, ingredient.category ?? ""))
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.ingredient.name.localeCompare(b.ingredient.name, "it");
+    });
+
+  const similarIngredients = (ingredientsQuery.data ?? [])
+    .filter((ingredient) => ingredient.id !== editingId)
+    .map((ingredient) => ({
+      ingredient,
+      score: getSmartSearchScore(draftSearch, buildSmartSearchText(ingredient.name, ingredient.category ?? ""))
+    }))
+    .filter(({ score }) => score >= 30)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map(({ ingredient }) => ingredient);
+
+  const visibleIngredients = activeSearch ? scoredIngredients.map(({ ingredient }) => ingredient) : ingredientsQuery.data ?? [];
+  const visibleGrouped = visibleIngredients.reduce<Record<string, Ingredient[]>>((acc, ingredient) => {
+    const key = ingredient.category ?? "Altro";
     if (!acc[key]) acc[key] = [];
-    acc[key].push(ing);
+    acc[key].push(ingredient);
     return acc;
   }, {});
 
-  const sortedGroups = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
+  const sortedGroups = Object.entries(visibleGrouped).sort(([a], [b]) => a.localeCompare(b));
 
   return (
     <div className="flex flex-col gap-5">
@@ -90,6 +117,22 @@ export function IngredientsPage() {
         >
           + Aggiungi
         </button>
+      </div>
+
+      <div className="app-panel">
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Ricerca smart
+        </label>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cerca per nome o categoria"
+          className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+        />
+        <p className="mt-2 text-xs text-slate-500">
+          La ricerca tiene conto di nomi simili, accenti e categoria.
+        </p>
       </div>
 
       {showForm && (
@@ -111,6 +154,12 @@ export function IngredientsPage() {
               placeholder="Categoria (es. verdure, proteine…)"
               className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
             />
+            {similarIngredients.length > 0 && (
+              <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                Esistono già ingredienti simili:{" "}
+                {similarIngredients.map((ingredient) => ingredient.name).join(", ")}.
+              </div>
+            )}
             {error && <p className="text-sm text-rose-600">{error}</p>}
             <div className="flex gap-3">
               <button type="button" onClick={resetForm} className="app-btn-sm app-btn-secondary flex-1">
@@ -136,6 +185,10 @@ export function IngredientsPage() {
 
       {ingredientsQuery.isSuccess && (ingredientsQuery.data?.length ?? 0) === 0 && !showForm && (
         <div className="app-empty">Nessun ingrediente. Aggiungine uno per iniziare.</div>
+      )}
+
+      {ingredientsQuery.isSuccess && (ingredientsQuery.data?.length ?? 0) > 0 && sortedGroups.length === 0 && (
+        <div className="app-empty">Nessun ingrediente corrisponde alla ricerca attuale.</div>
       )}
 
       {sortedGroups.map(([group, items]) => (

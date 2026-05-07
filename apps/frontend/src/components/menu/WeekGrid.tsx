@@ -64,13 +64,12 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
                 >
                   {meal ? (
                     <div className="flex h-full flex-col items-center justify-center gap-1">
-                      <span className="text-[9px] uppercase tracking-[0.16em] opacity-65">Assegnato</span>
                       <span className="line-clamp-3 text-[11px] font-semibold leading-tight">
                         {meal.recipe?.name ?? meal.customName ?? "—"}
                       </span>
                     </div>
                   ) : (
-                    <span className="text-base leading-none">+</span>
+                    <span className="text-base leading-none">{isSelected ? "✓" : "+"}</span>
                   )}
                 </button>
               );

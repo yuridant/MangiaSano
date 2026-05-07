@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { buildSmartSearchText, getSmartSearchScore } from "../lib/smart-search";
 import type { Ingredient, MealSlot, Recipe } from "../types";
 import { SLOT_LABELS, SLOTS } from "../types";
 
@@ -14,6 +15,7 @@ export function RecipesPage() {
   const [description, setDescription] = useState("");
   const [mealTypes, setMealTypes] = useState<MealSlot[]>([]);
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
 
   const recipesQuery = useQuery({
@@ -100,6 +102,57 @@ export function RecipesPage() {
     }
   };
 
+  const selectedIngredientNames = selectedIngredients
+    .map((id) => ingredientsQuery.data?.find((ingredient) => ingredient.id === id)?.name ?? "")
+    .filter(Boolean);
+  const draftSearch = buildSmartSearchText(
+    name,
+    description,
+    mealTypes.map((slot) => SLOT_LABELS[slot]).join(" "),
+    selectedIngredientNames.join(" ")
+  );
+  const activeSearch = search.trim() || (showForm ? draftSearch : "");
+
+  const scoredRecipes = (recipesQuery.data ?? [])
+    .map((recipe) => ({
+      recipe,
+      score: getSmartSearchScore(
+        activeSearch,
+        buildSmartSearchText(
+          recipe.name,
+          recipe.description ?? "",
+          recipe.mealTypes.map((slot) => SLOT_LABELS[slot]).join(" "),
+          recipe.ingredients.map((ingredient) => ingredient.ingredient.name).join(" ")
+        )
+      )
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.recipe.name.localeCompare(b.recipe.name, "it");
+    });
+
+  const similarRecipes = (recipesQuery.data ?? [])
+    .filter((recipe) => recipe.id !== editingId)
+    .map((recipe) => ({
+      recipe,
+      score: getSmartSearchScore(
+        draftSearch,
+        buildSmartSearchText(
+          recipe.name,
+          recipe.description ?? "",
+          recipe.mealTypes.map((slot) => SLOT_LABELS[slot]).join(" "),
+          recipe.ingredients.map((ingredient) => ingredient.ingredient.name).join(" ")
+        )
+      )
+    }))
+    .filter(({ score }) => score >= 30)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map(({ recipe }) => recipe);
+
+  const visibleRecipes = activeSearch ? scoredRecipes.map(({ recipe }) => recipe) : recipesQuery.data ?? [];
+
   return (
     <div className="flex flex-col gap-5">
       <div className="app-page-header flex items-center justify-between">
@@ -111,6 +164,22 @@ export function RecipesPage() {
         >
           + Aggiungi
         </button>
+      </div>
+
+      <div className="app-panel">
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Ricerca smart
+        </label>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cerca per nome, descrizione, tipo pasto o ingredienti"
+          className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+        />
+        <p className="mt-2 text-xs text-slate-500">
+          La ricerca tiene conto anche degli ingredienti e delle tipologie di pasto.
+        </p>
       </div>
 
       {showForm && (
@@ -132,6 +201,11 @@ export function RecipesPage() {
               rows={2}
               className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none resize-none"
             />
+            {similarRecipes.length > 0 && (
+              <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                Esistono già ricette simili: {similarRecipes.map((recipe) => recipe.name).join(", ")}.
+              </div>
+            )}
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Tipologie di pasto
@@ -208,8 +282,12 @@ export function RecipesPage() {
         <div className="app-empty">Nessuna ricetta. Aggiungine una per iniziare.</div>
       )}
 
+      {recipesQuery.isSuccess && (recipesQuery.data?.length ?? 0) > 0 && visibleRecipes.length === 0 && (
+        <div className="app-empty">Nessuna ricetta corrisponde alla ricerca attuale.</div>
+      )}
+
       <div className="flex flex-col gap-3">
-        {(recipesQuery.data ?? []).map((recipe) => (
+        {visibleRecipes.map((recipe) => (
           <div key={recipe.id} className="app-panel">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
