@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { AiMealPlan, AiResponse, MealSlot } from "../types";
-import { DAYS_FULL, SLOT_LABELS, SLOTS } from "../types";
+import type { AiMealPlan, AiResponse, MealSlot, WeeklyMenu } from "../types";
+import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
 
 function getMonday(date: Date) {
   const d = new Date(date);
@@ -20,29 +20,89 @@ interface SelectedSlot {
   mealSlot: MealSlot;
 }
 
+function getSlotKey(dayOfWeek: number, mealSlot: MealSlot) {
+  return `${dayOfWeek}-${mealSlot}`;
+}
+
+function sortMealPlans(meals: AiMealPlan[]) {
+  return [...meals].sort((a, b) => {
+    if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+    return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+  });
+}
+
 export function GeneratePage() {
   const { token, activeFamilyId } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
 
   const [selectedSlots, setSelectedSlots] = useState<SelectedSlot[]>([]);
   const [aiResult, setAiResult] = useState<AiResponse | null>(null);
   const [planToSave, setPlanToSave] = useState<AiMealPlan[]>([]);
+  const [goal, setGoal] = useState("Piano equilibrato con riduzione picchi glicemici");
   const [error, setError] = useState("");
   const [step, setStep] = useState<"select" | "preview">("select");
 
-  const weekStart = getMonday(new Date()).toISOString().split("T")[0];
+  const requestedWeekStart = searchParams.get("weekStart");
+  const parsedWeekStart =
+    requestedWeekStart && !Number.isNaN(new Date(requestedWeekStart).getTime())
+      ? new Date(requestedWeekStart + "T00:00:00")
+      : getMonday(new Date());
+  const weekStart = getMonday(parsedWeekStart).toISOString().split("T")[0];
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
     setSelectedSlots((prev) => {
       const exists = prev.some((s) => s.dayOfWeek === dayOfWeek && s.mealSlot === mealSlot);
       if (exists) return prev.filter((s) => !(s.dayOfWeek === dayOfWeek && s.mealSlot === mealSlot));
-      return [...prev, { dayOfWeek, mealSlot }];
+      return sortSelections([...prev, { dayOfWeek, mealSlot }]);
     });
   };
 
   const isSelected = (dayOfWeek: number, mealSlot: MealSlot) =>
     selectedSlots.some((s) => s.dayOfWeek === dayOfWeek && s.mealSlot === mealSlot);
+
+  const sortSelections = (slots: SelectedSlot[]) =>
+    [...slots].sort((a, b) => {
+      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+      return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+    });
+
+  const allSlots = sortSelections(
+    DAYS_FULL.flatMap((_, dayOfWeek) => SLOTS.map((mealSlot) => ({ dayOfWeek, mealSlot })))
+  );
+
+  const toggleDaySelection = (dayOfWeek: number) => {
+    setSelectedSlots((prev) => {
+      const daySlots = SLOTS.map((mealSlot) => ({ dayOfWeek, mealSlot }));
+      const allDaySelected = daySlots.every((slot) => prev.some((selected) => getSlotKey(selected.dayOfWeek, selected.mealSlot) === getSlotKey(slot.dayOfWeek, slot.mealSlot)));
+      if (allDaySelected) {
+        return prev.filter((slot) => slot.dayOfWeek !== dayOfWeek);
+      }
+      const merged = [...prev.filter((slot) => slot.dayOfWeek !== dayOfWeek), ...daySlots];
+      return sortSelections(merged);
+    });
+  };
+
+  const toggleMealTypeSelection = (mealSlot: MealSlot) => {
+    setSelectedSlots((prev) => {
+      const slotAcrossWeek = DAYS_FULL.map((_, dayOfWeek) => ({ dayOfWeek, mealSlot }));
+      const allTypeSelected = slotAcrossWeek.every((slot) =>
+        prev.some((selected) => getSlotKey(selected.dayOfWeek, selected.mealSlot) === getSlotKey(slot.dayOfWeek, slot.mealSlot))
+      );
+      if (allTypeSelected) {
+        return prev.filter((slot) => slot.mealSlot !== mealSlot);
+      }
+      const merged = [...prev.filter((slot) => slot.mealSlot !== mealSlot), ...slotAcrossWeek];
+      return sortSelections(merged);
+    });
+  };
+
+  const isDayFullySelected = (dayOfWeek: number) =>
+    SLOTS.every((mealSlot) => isSelected(dayOfWeek, mealSlot));
+
+  const isMealTypeFullySelected = (mealSlot: MealSlot) =>
+    DAYS_FULL.every((_, dayOfWeek) => isSelected(dayOfWeek, mealSlot));
 
   const generateMutation = useMutation({
     mutationFn: () =>
@@ -50,13 +110,13 @@ export function GeneratePage() {
         `/ai/generate?familyId=${activeFamilyId}`,
         {
           slots: selectedSlots,
-          goal: "Piano equilibrato con riduzione picchi glicemici"
+          goal
         },
         token!
       ),
     onSuccess: (data) => {
       setAiResult(data);
-      setPlanToSave(data.weeklyPlan);
+      setPlanToSave(sortMealPlans(data.weeklyPlan));
       setStep("preview");
     },
     onError: (err) => {
@@ -119,6 +179,20 @@ export function GeneratePage() {
         })
         .filter(Boolean) as { dayOfWeek: number; mealSlot: MealSlot; recipeId: string }[];
 
+      const currentMenu = await api.get<WeeklyMenu | null>(
+        `/menus/${weekStart}?familyId=${activeFamilyId}`,
+        token!
+      );
+      const selectedSlotKeys = new Set(selectedSlots.map((slot) => getSlotKey(slot.dayOfWeek, slot.mealSlot)));
+      const savedMealKeys = new Set(meals.map((meal) => getSlotKey(meal.dayOfWeek, meal.mealSlot)));
+
+      for (const existingMeal of currentMenu?.meals ?? []) {
+        const slotKey = getSlotKey(existingMeal.dayOfWeek, existingMeal.mealSlot);
+        if (selectedSlotKeys.has(slotKey) && !savedMealKeys.has(slotKey)) {
+          await api.delete(`/menus/${weekStart}/meals/${existingMeal.id}?familyId=${activeFamilyId}`, token!);
+        }
+      }
+
       await api.put(
         `/menus/${weekStart}/meals?familyId=${activeFamilyId}`,
         { meals },
@@ -126,8 +200,8 @@ export function GeneratePage() {
       );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["menu"] });
-      navigate("/");
+      queryClient.invalidateQueries({ queryKey: ["menu", activeFamilyId, weekStart] });
+      navigate(`/menu?weekStart=${weekStart}`);
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Errore durante il salvataggio");
@@ -135,7 +209,9 @@ export function GeneratePage() {
   });
 
   const removeMeal = (dayOfWeek: number, mealSlot: MealSlot) => {
-    setPlanToSave((prev) => prev.filter((m) => !(m.dayOfWeek === dayOfWeek && m.mealSlot === mealSlot)));
+    setPlanToSave((prev) =>
+      sortMealPlans(prev.filter((m) => !(m.dayOfWeek === dayOfWeek && m.mealSlot === mealSlot)))
+    );
   };
 
   if (step === "preview" && aiResult) {
@@ -144,7 +220,7 @@ export function GeneratePage() {
         <div className="app-page-header">
           <h1 className="text-2xl font-bold text-ink">Piano proposto dall'AI</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Rimuovi i pasti che non ti convincono, poi conferma.
+            Rimuovi i pasti che non ti convincono, poi conferma il menu della settimana selezionata.
           </p>
         </div>
 
@@ -191,7 +267,9 @@ export function GeneratePage() {
               </div>
             ))}
             {planToSave.length === 0 && (
-              <p className="text-sm text-slate-400">Nessun pasto rimasto nel piano.</p>
+              <p className="text-sm text-slate-400">
+                Nessun pasto rimasto nel piano. Aggiungi almeno un pasto per poter salvare il menu.
+              </p>
             )}
           </div>
         </div>
@@ -226,23 +304,48 @@ export function GeneratePage() {
       <div className="app-page-header">
         <h1 className="text-2xl font-bold text-ink">Genera menu con AI</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Seleziona i pasti da generare per la settimana corrente.
+          Seleziona i pasti da generare per la settimana del{" "}
+          {new Date(weekStart + "T00:00:00").toLocaleDateString("it-IT", {
+            day: "numeric",
+            month: "long",
+            year: "numeric"
+          })}.
         </p>
+      </div>
+
+      <div className="app-panel">
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Obiettivo del piano AI
+        </label>
+        <input
+          type="text"
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          placeholder="Es. Piatti semplici, economici e adatti a picchi glicemici ridotti"
+          className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+        />
       </div>
 
       {/* Quick select buttons */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => {
-            const all: SelectedSlot[] = [];
-            for (let d = 0; d < 7; d++) {
-              for (const slot of ["lunch", "dinner"] as MealSlot[]) {
-                all.push({ dayOfWeek: d, mealSlot: slot });
-              }
-            }
-            setSelectedSlots(all);
-          }}
+          onClick={() => setSelectedSlots(allSlots)}
+          className="app-btn-xs app-btn-sage"
+        >
+          Tutti i pasti
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setSelectedSlots(
+              sortSelections(
+                DAYS_FULL.flatMap((_, dayOfWeek) =>
+                  (["lunch", "dinner"] as MealSlot[]).map((mealSlot) => ({ dayOfWeek, mealSlot }))
+                )
+              )
+            )
+          }
           className="app-btn-xs app-btn-secondary"
         >
           Pranzi e cene (7 giorni)
@@ -254,6 +357,46 @@ export function GeneratePage() {
         >
           Deseleziona tutto
         </button>
+      </div>
+
+      <div className="app-panel">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Selezione rapida per giorno
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {DAYS.map((day, dayOfWeek) => (
+            <button
+              key={day}
+              type="button"
+              onClick={() => toggleDaySelection(dayOfWeek)}
+              className={`app-btn-xs ${
+                isDayFullySelected(dayOfWeek) ? "app-btn-sage" : "app-btn-secondary"
+              }`}
+            >
+              {isDayFullySelected(dayOfWeek) ? `Togli ${day}` : `Tutto ${day}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="app-panel">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Selezione rapida per tipo pasto
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {SLOTS.map((slot) => (
+            <button
+              key={slot}
+              type="button"
+              onClick={() => toggleMealTypeSelection(slot)}
+              className={`app-btn-xs ${
+                isMealTypeFullySelected(slot) ? "app-btn-sage" : "app-btn-secondary"
+              }`}
+            >
+              {isMealTypeFullySelected(slot) ? `Togli ${SLOT_LABELS[slot]}` : `${SLOT_LABELS[slot]} x7`}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Slot grid */}
@@ -302,10 +445,16 @@ export function GeneratePage() {
         <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
       )}
 
+      {!goal.trim() && (
+        <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          Inserisci un obiettivo per aiutare l&apos;AI a proporre un menu coerente.
+        </p>
+      )}
+
       <button
         type="button"
         onClick={() => { setError(""); generateMutation.mutate(); }}
-        disabled={selectedSlots.length === 0 || generateMutation.isPending}
+        disabled={selectedSlots.length === 0 || generateMutation.isPending || !goal.trim()}
         className="app-btn app-btn-sage w-full disabled:opacity-60"
       >
         {generateMutation.isPending ? "Generazione in corso..." : "🤖 Genera con AI"}

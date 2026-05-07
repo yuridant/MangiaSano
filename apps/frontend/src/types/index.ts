@@ -1,4 +1,9 @@
-export type MealSlot = "breakfast" | "lunch" | "dinner" | "snack";
+export type MealSlot =
+  | "breakfast"
+  | "snack_morning"
+  | "lunch"
+  | "snack_afternoon"
+  | "dinner";
 export type MembershipRole = "owner" | "member";
 
 export interface User {
@@ -113,10 +118,25 @@ export interface AnalyticsSummary {
 
 export const DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"] as const;
 export const DAYS_FULL = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"] as const;
-export const SLOTS: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+export const SLOTS: MealSlot[] = [
+  "breakfast",
+  "snack_morning",
+  "lunch",
+  "snack_afternoon",
+  "dinner"
+];
 export const SLOT_LABELS: Record<MealSlot, string> = {
   breakfast: "Colazione",
+  snack_morning: "Spuntino mattutino",
   lunch: "Pranzo",
-  dinner: "Cena",
-  snack: "Spuntino"
+  snack_afternoon: "Spuntino pomeridiano",
+  dinner: "Cena"
+};
+
+export const MEAL_SLOT_ORDER: Record<MealSlot, number> = {
+  breakfast: 0,
+  snack_morning: 1,
+  lunch: 2,
+  snack_afternoon: 3,
+  dinner: 4
 };

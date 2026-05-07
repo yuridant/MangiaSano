@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { AuthService } from "./auth.service";
@@ -32,16 +33,19 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post("register")
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   register(@Body() body: unknown) {
     return this.authService.register(registerSchema.parse(body));
   }
 
   @Post("login")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   login(@Body() body: unknown) {
     return this.authService.login(loginSchema.parse(body));
   }
 
   @Post("refresh")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   refresh(@Body() body: unknown) {
     const { refreshToken } = refreshSchema.parse(body);
     return this.authService.refresh(refreshToken);

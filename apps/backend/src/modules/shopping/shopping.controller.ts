@@ -36,4 +36,13 @@ export class ShoppingController {
   ) {
     return this.shoppingService.resetList(req.user.id, familyId, listId);
   }
+
+  @Post(":weekStart/regenerate")
+  regenerateList(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("weekStart") weekStart: string
+  ) {
+    return this.shoppingService.regenerateList(req.user.id, familyId, weekStart);
+  }
 }

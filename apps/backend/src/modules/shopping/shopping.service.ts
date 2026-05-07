@@ -12,57 +12,12 @@ export class ShoppingService {
   async getOrGenerateList(userId: string, familyId: string, weekStart: string) {
     await this.families.requireMembership(userId, familyId);
 
-    const date = this.parseWeekStart(weekStart);
-    const menu = await this.prisma.weeklyMenu.findUnique({
-      where: { weekStart_familyId: { weekStart: date, familyId } },
-      include: {
-        meals: {
-          include: {
-            recipe: {
-              include: {
-                ingredients: { include: { ingredient: true } }
-              }
-            }
-          }
-        },
-        shoppingLists: {
-          where: { familyId },
-          include: {
-            items: { include: { ingredient: { select: { id: true, name: true, category: true } } } }
-          }
-        }
-      }
-    });
-
-    if (!menu) throw new NotFoundException("Menu non trovato per questa settimana.");
+    const menu = await this.getMenuWithShoppingLists(familyId, weekStart);
 
     const existing = menu.shoppingLists[0];
     if (existing) return this.formatList(existing);
 
-    const ingredientMap = new Map<string, { id: string; name: string; category: string | null }>();
-    for (const meal of menu.meals) {
-      if (!meal.recipe) continue;
-      for (const ri of meal.recipe.ingredients) {
-        ingredientMap.set(ri.ingredient.id, ri.ingredient);
-      }
-    }
-
-    const list = await this.prisma.shoppingList.create({
-      data: {
-        weeklyMenuId: menu.id,
-        familyId,
-        items: {
-          create: Array.from(ingredientMap.values()).map((i) => ({
-            ingredientId: i.id
-          }))
-        }
-      },
-      include: {
-        items: { include: { ingredient: { select: { id: true, name: true, category: true } } } }
-      }
-    });
-
-    return this.formatList(list);
+    return this.createListFromMenu(menu.id, familyId, menu.meals);
   }
 
   async toggleItem(userId: string, familyId: string, listId: string, itemId: string) {
@@ -92,6 +47,84 @@ export class ShoppingService {
     });
 
     return { success: true };
+  }
+
+  async regenerateList(userId: string, familyId: string, weekStart: string) {
+    await this.families.requireMembership(userId, familyId);
+
+    const menu = await this.getMenuWithShoppingLists(familyId, weekStart);
+    const existing = menu.shoppingLists[0];
+
+    if (existing) {
+      await this.prisma.shoppingList.delete({ where: { id: existing.id } });
+    }
+
+    return this.createListFromMenu(menu.id, familyId, menu.meals);
+  }
+
+  private async getMenuWithShoppingLists(familyId: string, weekStart: string) {
+    const date = this.parseWeekStart(weekStart);
+    const menu = await this.prisma.weeklyMenu.findUnique({
+      where: { weekStart_familyId: { weekStart: date, familyId } },
+      include: {
+        meals: {
+          include: {
+            recipe: {
+              include: {
+                ingredients: { include: { ingredient: true } }
+              }
+            }
+          }
+        },
+        shoppingLists: {
+          where: { familyId },
+          include: {
+            items: { include: { ingredient: { select: { id: true, name: true, category: true } } } }
+          }
+        }
+      }
+    });
+
+    if (!menu) throw new NotFoundException("Menu non trovato per questa settimana.");
+
+    return menu;
+  }
+
+  private async createListFromMenu(
+    weeklyMenuId: string,
+    familyId: string,
+    meals: {
+      recipe: {
+        ingredients: {
+          ingredient: { id: string; name: string; category: string | null };
+        }[];
+      } | null;
+    }[]
+  ) {
+    const ingredientMap = new Map<string, { id: string; name: string; category: string | null }>();
+    for (const meal of meals) {
+      if (!meal.recipe) continue;
+      for (const ri of meal.recipe.ingredients) {
+        ingredientMap.set(ri.ingredient.id, ri.ingredient);
+      }
+    }
+
+    const list = await this.prisma.shoppingList.create({
+      data: {
+        weeklyMenuId,
+        familyId,
+        items: {
+          create: Array.from(ingredientMap.values()).map((ingredient) => ({
+            ingredientId: ingredient.id
+          }))
+        }
+      },
+      include: {
+        items: { include: { ingredient: { select: { id: true, name: true, category: true } } } }
+      }
+    });
+
+    return this.formatList(list);
   }
 
   private formatList(list: {

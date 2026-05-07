@@ -1,14 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
-import { MealSlot } from "@prisma/client";
 import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
+import { mealSlotSchema, type MealSlot } from "../../common/meal-slots";
 import { MenusService } from "./menus.service";
-
-const mealSlotEnum = z.enum(["breakfast", "lunch", "dinner", "snack"] as const);
 
 const upsertMealSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
-  mealSlot: mealSlotEnum,
+  mealSlot: mealSlotSchema,
   recipeId: z.string().optional(),
   customName: z.string().optional()
 });
@@ -17,7 +15,7 @@ const bulkSaveSchema = z.object({
   meals: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
-      mealSlot: mealSlotEnum,
+      mealSlot: mealSlotSchema,
       recipeId: z.string()
     })
   )

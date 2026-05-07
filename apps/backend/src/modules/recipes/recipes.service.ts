@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { MealSlot } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
+import type { MealSlot } from "../../common/meal-slots";
 import { FamiliesService } from "../families/families.service";
 
 @Injectable()
@@ -70,7 +71,7 @@ export class RecipesService {
       if (existing && existing.id !== recipeId) throw new ConflictException("Nome già in uso.");
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (data.ingredientIds !== undefined) {
         await tx.recipeIngredient.deleteMany({ where: { recipeId } });
         await tx.recipeIngredient.createMany({
@@ -127,7 +128,7 @@ export class RecipesService {
             familyId,
             createdById: userId,
             ingredients: {
-              create: ingredientRecords.map((i) => ({ ingredientId: i.id }))
+              create: ingredientRecords.map((ingredient) => ({ ingredientId: ingredient.id }))
             }
           }
         });

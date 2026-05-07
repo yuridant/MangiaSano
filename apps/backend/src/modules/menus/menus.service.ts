@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { MealSlot } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
+import { MEAL_SLOT_ORDER, type MealSlot } from "../../common/meal-slots";
 import { FamiliesService } from "../families/families.service";
 
 @Injectable()
@@ -41,7 +41,15 @@ export class MenusService {
       }
     });
 
-    return menu;
+    return menu
+      ? {
+          ...menu,
+          meals: [...menu.meals].sort((a, b) => {
+            if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+            return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+          })
+        }
+      : null;
   }
 
   async upsertMeal(

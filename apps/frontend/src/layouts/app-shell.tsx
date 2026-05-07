@@ -10,6 +10,7 @@ const PRIMARY_LINKS = [
 ] as const;
 
 const SECONDARY_LINKS = [
+  { to: "/menu", label: "Tutti i menu" },
   { to: "/ingredients", label: "Ingredienti" },
   { to: "/analytics", label: "Analytics" },
   { to: "/family", label: "Famiglia" },
@@ -17,7 +18,8 @@ const SECONDARY_LINKS = [
 ] as const;
 
 const SIDEBAR_LINKS = [
-  { to: "/", label: "Menu settimanale" },
+  { to: "/", label: "Dashboard" },
+  { to: "/menu", label: "Tutti i menu" },
   { to: "/menu/generate", label: "Genera con AI" },
   { to: "/recipes", label: "Ricette" },
   { to: "/ingredients", label: "Ingredienti" },
@@ -32,11 +34,23 @@ function matchesPath(pathname: string, to: string) {
   return pathname.startsWith(to);
 }
 
+function isSidebarLinkActive(pathname: string, to: string) {
+  if (to === "/") return pathname === "/";
+  if (to === "/menu") return pathname === "/menu";
+  return matchesPath(pathname, to);
+}
+
+function isPrimaryLinkActive(pathname: string, to: string) {
+  if (to === "/") return pathname === "/" || pathname === "/menu";
+  return matchesPath(pathname, to);
+}
+
 export function AppShell() {
-  const { user, isReady } = useAuth();
+  const { user, families, activeFamilyId, isReady } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [touchStartY, setTouchStartY] = useState<number | null>(null);
+  const activeFamily = families.find((family) => family.id === activeFamilyId) ?? null;
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -86,16 +100,25 @@ export function AppShell() {
             <h1 className="mt-2 text-xl font-bold leading-snug">
               Mangia bene,<br />ogni settimana
             </h1>
+            <div className="mt-5 rounded-[1.4rem] bg-white/10 p-4">
+              <p className="text-sm font-semibold text-white">{user.name ?? user.email}</p>
+              <p className="mt-1 text-xs text-white/60">{user.email}</p>
+              <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Famiglia attiva</p>
+              <p className="mt-1 text-sm font-medium text-white/85">
+                {activeFamily?.name ?? "Nessuna famiglia selezionata"}
+              </p>
+            </div>
           </div>
           <nav className="flex flex-col gap-1.5 p-4">
             {SIDEBAR_LINKS.map((link) => (
               <NavLink
                 key={link.to}
                 to={link.to}
-                end={link.to === "/"}
-                className={({ isActive }) =>
+                className={() =>
                   `rounded-[1.4rem] px-4 py-3 text-sm font-medium transition ${
-                    isActive ? "bg-white text-ink" : "text-white/75 hover:bg-white/10 hover:text-white"
+                    isSidebarLinkActive(location.pathname, link.to)
+                      ? "bg-white text-ink"
+                      : "text-white/75 hover:bg-white/10 hover:text-white"
                   }`
                 }
               >
@@ -142,6 +165,12 @@ export function AppShell() {
                   <div className="mb-2 flex justify-center">
                     <span className="h-1.5 w-12 rounded-full bg-slate-300" />
                   </div>
+                  <div className="mb-3 rounded-[1.2rem] bg-slate-100/90 px-4 py-3">
+                    <p className="text-sm font-semibold text-ink">{user.name ?? user.email}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {activeFamily?.name ?? "Nessuna famiglia attiva"}
+                    </p>
+                  </div>
                   <nav className="grid gap-1.5">
                     {SECONDARY_LINKS.map((link) => (
                       <NavLink
@@ -183,10 +212,9 @@ export function AppShell() {
                   <NavLink
                     key={link.to}
                     to={link.to}
-                    end={link.to === "/"}
-                    className={({ isActive }) =>
+                    className={() =>
                       `app-mobile-nav-item ${
-                        isActive && !isMobileMenuOpen
+                        isPrimaryLinkActive(location.pathname, link.to) && !isMobileMenuOpen
                           ? "app-mobile-nav-item-active"
                           : "app-mobile-nav-item-inactive"
                       }`

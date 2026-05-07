@@ -1,11 +1,12 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 export function AccountPage() {
-  const { token, user, families, logout, setActiveFamilyId, activeFamilyId } = useAuth();
-  const queryClient = useQueryClient();
+  const { token, user, families, logout, setActiveFamilyId, activeFamilyId, refreshSession } = useAuth();
+  const navigate = useNavigate();
 
   const [editingProfile, setEditingProfile] = useState(false);
   const [name, setName] = useState(user?.name ?? "");
@@ -21,8 +22,8 @@ export function AccountPage() {
   const profileMutation = useMutation({
     mutationFn: (data: { name?: string }) =>
       api.patch("/auth/profile", data, token!),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["me"] });
+    onSuccess: async () => {
+      await refreshSession();
       setEditingProfile(false);
       setProfileError("");
       setProfileSuccess("Profilo aggiornato.");
@@ -39,14 +40,15 @@ export function AccountPage() {
       setCurrentPassword("");
       setNewPassword("");
       setPasswordError("");
-      setPasswordSuccess("Password aggiornata.");
-      setTimeout(() => setPasswordSuccess(""), 3000);
+      setPasswordSuccess("");
+      window.sessionStorage.setItem("mangiasano.loginMessage", "password-changed");
+      logout();
+      navigate("/login", { replace: true });
     },
     onError: (err) => setPasswordError(err instanceof Error ? err.message : "Errore")
   });
 
   if (!user) return null;
-
 
   return (
     <div className="flex flex-col gap-5">

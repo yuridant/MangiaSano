@@ -1,22 +1,20 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { MealSlot } from "@prisma/client";
 import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
+import { mealSlotSchema, type MealSlot } from "../../common/meal-slots";
 import { RecipesService } from "./recipes.service";
-
-const mealSlotEnum = z.enum(["breakfast", "lunch", "dinner", "snack"] as const);
 
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  mealType: mealSlotEnum.optional(),
+  mealType: mealSlotSchema.optional(),
   ingredientIds: z.array(z.string()).optional()
 });
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
-  mealType: mealSlotEnum.nullable().optional(),
+  mealType: mealSlotSchema.nullable().optional(),
   ingredientIds: z.array(z.string()).optional()
 });
 

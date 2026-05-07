@@ -4,6 +4,7 @@ import {
   Injectable,
   UnauthorizedException
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { compare, hash } from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { sign } from "jsonwebtoken";
@@ -52,7 +53,7 @@ export class AuthService {
         throw new BadRequestException("L'invito appartiene a un'altra email.");
       }
 
-      const user = await this.prisma.$transaction(async (tx) => {
+      const user = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const u = await tx.user.create({
           data: { name: payload.name, email, passwordHash: await hash(payload.password, 10) }
         });
@@ -71,7 +72,7 @@ export class AuthService {
       return { accessToken, refreshToken };
     }
 
-    const user = await this.prisma.$transaction(async (tx) => {
+    const user = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const u = await tx.user.create({
         data: { name: payload.name, email, passwordHash: await hash(payload.password, 10) }
       });
@@ -135,11 +136,11 @@ export class AuthService {
       }
     });
 
-    const families = memberships.map((m) => ({
-      id: m.family.id,
-      name: m.family.name,
-      role: m.role,
-      memberCount: m.family._count.memberships
+    const families = memberships.map((membership) => ({
+      id: membership.family.id,
+      name: membership.family.name,
+      role: membership.role,
+      memberCount: membership.family._count.memberships
     }));
 
     return { user, families };
@@ -186,7 +187,7 @@ export class AuthService {
     });
     if (existing) throw new ConflictException("Sei già membro di questa famiglia.");
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.familyMembership.create({
         data: { familyId: invitation.familyId, userId, role: invitation.role }
       });

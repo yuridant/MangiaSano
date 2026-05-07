@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
@@ -11,7 +11,7 @@ interface InviteInfo {
 
 export function InvitePage() {
   const { token } = useParams<{ token: string }>();
-  const { user, token: authToken } = useAuth();
+  const { user, token: authToken, refreshSession } = useAuth();
   const navigate = useNavigate();
   const [invite, setInvite] = useState<InviteInfo | null>(null);
   const [error, setError] = useState("");
@@ -30,6 +30,7 @@ export function InvitePage() {
     setLoading(true);
     try {
       await api.post("/auth/invitations/accept", { token }, authToken);
+      await refreshSession();
       navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore nell'accettare l'invito");
@@ -65,18 +66,18 @@ export function InvitePage() {
             Entra in <strong>{invite.familyName}</strong> su MangiaSano
           </p>
           <div className="mt-6 flex flex-col gap-3">
-            <a
-              href={`/login?invite=${token}`}
+            <Link
+              to={`/login?invite=${token}`}
               className="app-btn app-btn-primary w-full"
             >
               Accedi al tuo account
-            </a>
-            <a
-              href={`/register?invite=${token}`}
+            </Link>
+            <Link
+              to={`/register?invite=${token}`}
               className="app-btn app-btn-secondary w-full"
             >
               Crea un account
-            </a>
+            </Link>
           </div>
         </div>
       </div>

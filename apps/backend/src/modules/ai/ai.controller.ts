@@ -1,13 +1,14 @@
 import { Body, Controller, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
+import { mealSlotSchema } from "../../common/meal-slots";
 import { AiService } from "./ai.service";
 
 const generateSchema = z.object({
   slots: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
-      mealSlot: z.enum(["breakfast", "lunch", "dinner", "snack"])
+      mealSlot: mealSlotSchema
     })
   ),
   goal: z.string().default("Piano equilibrato con riduzione picchi glicemici")

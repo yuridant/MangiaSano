@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
@@ -9,6 +9,14 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [persistedMessage, setPersistedMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const nextMessage = window.sessionStorage.getItem("mangiasano.loginMessage");
+    if (!nextMessage) return;
+    setPersistedMessage(nextMessage);
+    window.sessionStorage.removeItem("mangiasano.loginMessage");
+  }, []);
 
   if (isReady && user) return <Navigate to="/" replace />;
 
@@ -26,6 +34,11 @@ export function LoginPage() {
   };
 
   const inviteToken = searchParams.get("invite");
+  const shouldShowPasswordChangedMessage =
+    searchParams.get("message") === "password-changed" || persistedMessage === "password-changed";
+  const infoMessage = shouldShowPasswordChangedMessage
+    ? "Password aggiornata. Accedi di nuovo per continuare."
+    : "";
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
@@ -37,6 +50,12 @@ export function LoginPage() {
 
         <div className="app-panel">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {infoMessage && (
+              <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                {infoMessage}
+              </p>
+            )}
+
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Email

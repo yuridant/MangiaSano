@@ -37,7 +37,7 @@ export class AnalyticsService {
       select: { id: true, name: true }
     });
 
-    const recipeMap = new Map(recipes.map((r) => [r.id, r.name]));
+    const recipeMap = new Map(recipes.map((recipe) => [recipe.id, recipe.name]));
     return results.map((r) => ({
       recipeId: r.recipeId!,
       name: recipeMap.get(r.recipeId!) ?? "?",

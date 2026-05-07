@@ -64,6 +64,14 @@ export function ShoppingPage() {
       queryClient.invalidateQueries({ queryKey: ["shopping", activeFamilyId, weekStart] })
   });
 
+  const regenerateMutation = useMutation({
+    mutationFn: () =>
+      api.post<ShoppingList>(`/shopping/${weekStart}/regenerate?familyId=${activeFamilyId}`, {}, token!),
+    onSuccess: (nextList) => {
+      queryClient.setQueryData(["shopping", activeFamilyId, weekStart], nextList);
+    }
+  });
+
   const list = listQuery.data;
   const checkedCount = list?.items.filter((i) => i.checked).length ?? 0;
   const totalCount = list?.items.length ?? 0;
@@ -76,6 +84,9 @@ export function ShoppingPage() {
   }, {});
 
   const sortedGroups = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
+  const errorMessage =
+    listQuery.error instanceof Error ? listQuery.error.message : "Errore nel caricamento della lista.";
+  const isMenuMissingError = errorMessage.toLowerCase().includes("menu non trovato");
 
   return (
     <div className="flex flex-col gap-5">
@@ -116,9 +127,11 @@ export function ShoppingPage() {
       {listQuery.isError && (
         <div className="app-panel text-center">
           <p className="text-slate-500">
-            Nessun menu trovato per questa settimana.
-            <br />
-            Genera prima un menu con l'AI.
+            {isMenuMissingError
+              ? "Nessun menu trovato per questa settimana. Genera prima un menu con l'AI."
+              : errorMessage.includes("Failed to fetch")
+                ? "Connessione al server non riuscita. Controlla la rete e riprova."
+                : errorMessage}
           </p>
         </div>
       )}
@@ -131,15 +144,25 @@ export function ShoppingPage() {
               <span className="text-sm font-semibold text-ink">
                 {checkedCount} / {totalCount} prodotti
               </span>
-              {checkedCount > 0 && (
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={() => resetMutation.mutate(list.id)}
-                  className="text-xs text-slate-400 hover:text-slate-600"
+                  onClick={() => regenerateMutation.mutate()}
+                  disabled={regenerateMutation.isPending}
+                  className="text-xs text-sage hover:text-herb disabled:opacity-60"
                   type="button"
                 >
-                  Reimposta
+                  {regenerateMutation.isPending ? "Rigenerando..." : "Rigenera lista"}
                 </button>
-              )}
+                {checkedCount > 0 && (
+                  <button
+                    onClick={() => resetMutation.mutate(list.id)}
+                    className="text-xs text-slate-400 hover:text-slate-600"
+                    type="button"
+                  >
+                    Reimposta
+                  </button>
+                )}
+              </div>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
               <div

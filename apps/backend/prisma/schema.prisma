@@ -175,7 +175,8 @@ enum MembershipRole {
 
 enum MealSlot {
   breakfast
+  snack_morning
   lunch
+  snack_afternoon
   dinner
-  snack
 }

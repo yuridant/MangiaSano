@@ -141,20 +141,27 @@ export class FamiliesService {
   private async sendInviteEmail(email: string, token: string, familyName: string) {
     try {
       const appUrl = this.config.get<string>("APP_URL");
+      const smtpHost = this.config.get<string>("SMTP_HOST");
+      const smtpPort = this.config.get<number>("SMTP_PORT");
+      const smtpUser = this.config.get<string>("SMTP_USER");
+      const smtpPass = this.config.get<string>("SMTP_PASS");
+      const smtpFrom = this.config.get<string>("SMTP_FROM");
+      if (!appUrl || !smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) return;
+
       const inviteUrl = `${appUrl}/invite/${token}`;
 
       const transporter = createTransport({
-        host: this.config.get("SMTP_HOST"),
-        port: this.config.get<number>("SMTP_PORT"),
+        host: smtpHost,
+        port: smtpPort,
         secure: this.config.get<boolean>("SMTP_SECURE"),
         auth: {
-          user: this.config.get("SMTP_USER"),
-          pass: this.config.get("SMTP_PASS")
+          user: smtpUser,
+          pass: smtpPass
         }
       });
 
       await transporter.sendMail({
-        from: this.config.get("SMTP_FROM"),
+        from: smtpFrom,
         to: email,
         subject: `Sei stato invitato a ${familyName} su MangiaSano`,
         text: `Accetta l'invito: ${inviteUrl}`,

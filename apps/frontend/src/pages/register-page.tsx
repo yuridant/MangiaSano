@@ -91,6 +91,9 @@ export function RegisterPage() {
                   className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
                   placeholder="Es. Casa Rossi"
                 />
+                <p className="mt-2 text-xs text-slate-500">
+                  Senza una famiglia non puoi accedere alle funzionalità principali dell&apos;app.
+                </p>
               </div>
             )}
 
