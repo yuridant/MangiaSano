@@ -42,6 +42,7 @@ export function MenuPage() {
   const [recipeId, setRecipeId] = useState("");
   const [customName, setCustomName] = useState("");
   const [manualError, setManualError] = useState("");
+  const [manualModalOpen, setManualModalOpen] = useState(false);
 
   const menuQuery = useQuery({
     queryKey: ["menu", activeFamilyId, weekStart],
@@ -69,6 +70,7 @@ export function MenuPage() {
     setRecipeId("");
     setCustomName("");
     setManualError("");
+    setManualModalOpen(false);
   };
 
   const saveMealMutation = useMutation({
@@ -132,6 +134,7 @@ export function MenuPage() {
       setCustomName(meal.customName ?? "");
     }
     setManualError("");
+    setManualModalOpen(true);
   };
 
   return (
@@ -174,7 +177,7 @@ export function MenuPage() {
           <div>
             <h2 className="font-bold text-ink">Gestione manuale pasti</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Seleziona una cella della settimana e compila quel pasto con una ricetta esistente o un nome personalizzato.
+              Seleziona una cella della settimana per aprire subito l&apos;editor del pasto.
             </p>
           </div>
           <button
@@ -203,86 +206,119 @@ export function MenuPage() {
 
               setDayOfWeek(nextDayOfWeek);
               setMealSlot(nextMealSlot);
+              setMode("recipe");
+              setRecipeId("");
+              setCustomName("");
               setManualError("");
+              setManualModalOpen(true);
             }}
           />
         </div>
-
-        <p className="mt-4 text-sm font-medium text-ink">
-          Stai modificando: <span className="text-sage">{DAYS_FULL[dayOfWeek]} · {SLOT_LABELS[mealSlot]}</span>
-        </p>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setMode("recipe")}
-            className={`app-btn-xs ${mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
-          >
-            Usa una ricetta esistente
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("custom")}
-            className={`app-btn-xs ${mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
-          >
-            Inserisci un pasto manuale
-          </button>
-        </div>
-
-        <div className="mt-4">
-          {mode === "recipe" ? (
-            <label className="flex flex-col gap-1 text-sm text-slate-600">
-              Ricetta
-              <select
-                value={recipeId}
-                onChange={(e) => setRecipeId(e.target.value)}
-                className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-              >
-                <option value="">Seleziona una ricetta</option>
-                {recipeOptions.map((recipe) => (
-                  <option key={recipe.id} value={recipe.id}>
-                    {recipe.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <label className="flex flex-col gap-1 text-sm text-slate-600">
-              Nome del pasto
-              <input
-                type="text"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                placeholder="Es. Toast integrale con hummus"
-                className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-              />
-            </label>
-          )}
-        </div>
-
-        <p className="mt-3 text-xs text-slate-500">
-          Per un pasto completo con ingredienti e lista della spesa, crea prima una ricetta in{" "}
-          <Link to="/recipes" className="font-semibold text-sage hover:text-ink">
-            Ricette
-          </Link>
-          . Se ti mancano gli elementi base, puoi aggiungerli in{" "}
-          <Link to="/ingredients" className="font-semibold text-sage hover:text-ink">
-            Ingredienti
-          </Link>
-          .
-        </p>
-
-        {manualError && <p className="mt-3 text-sm text-rose-600">{manualError}</p>}
-
-        <button
-          type="button"
-          onClick={() => saveMealMutation.mutate()}
-          disabled={saveMealMutation.isPending}
-          className="app-btn app-btn-sage mt-4 disabled:opacity-60"
-        >
-          {saveMealMutation.isPending ? "Salvataggio..." : "Salva pasto manuale"}
-        </button>
       </div>
+
+      {manualModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
+          <div className="w-full max-w-lg rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+                  Menu manuale
+                </p>
+                <h2 className="mt-2 text-xl font-bold text-ink">
+                  {DAYS_FULL[dayOfWeek]} · {SLOT_LABELS[mealSlot]}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManualModalOpen(false)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-500 hover:bg-slate-200 hover:text-ink"
+              >
+                Chiudi
+              </button>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("recipe")}
+                className={`app-btn-xs ${mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
+              >
+                Usa una ricetta esistente
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("custom")}
+                className={`app-btn-xs ${mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
+              >
+                Inserisci un pasto manuale
+              </button>
+            </div>
+
+            <div className="mt-5">
+              {mode === "recipe" ? (
+                <label className="flex flex-col gap-1 text-sm text-slate-600">
+                  Ricetta
+                  <select
+                    value={recipeId}
+                    onChange={(e) => setRecipeId(e.target.value)}
+                    className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                  >
+                    <option value="">Seleziona una ricetta</option>
+                    {recipeOptions.map((recipe) => (
+                      <option key={recipe.id} value={recipe.id}>
+                        {recipe.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="flex flex-col gap-1 text-sm text-slate-600">
+                  Nome del pasto
+                  <input
+                    type="text"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder="Es. Toast integrale con hummus"
+                    className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                  />
+                </label>
+              )}
+            </div>
+
+            <p className="mt-4 text-xs text-slate-500">
+              Per un pasto completo con ingredienti e lista della spesa, crea prima una ricetta in{" "}
+              <Link to="/recipes" className="font-semibold text-sage hover:text-ink">
+                Ricette
+              </Link>
+              . Se ti mancano gli elementi base, puoi aggiungerli in{" "}
+              <Link to="/ingredients" className="font-semibold text-sage hover:text-ink">
+                Ingredienti
+              </Link>
+              .
+            </p>
+
+            {manualError && <p className="mt-4 text-sm text-rose-600">{manualError}</p>}
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setManualModalOpen(false)}
+                className="app-btn app-btn-secondary flex-1"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={() => saveMealMutation.mutate()}
+                disabled={saveMealMutation.isPending}
+                className="app-btn app-btn-sage flex-1 disabled:opacity-60"
+              >
+                {saveMealMutation.isPending ? "Salvataggio..." : "Salva pasto"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {menuQuery.isLoading && (
         <div className="flex justify-center py-10">

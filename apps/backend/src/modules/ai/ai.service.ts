@@ -29,7 +29,7 @@ const aiResponseSchema = z.object({
     z.object({
       name: z.string(),
       description: z.string().optional(),
-      mealType: mealSlotSchema.optional(),
+      mealTypes: z.array(mealSlotSchema).optional(),
       ingredients: z.array(z.string())
     })
   ),
@@ -99,7 +99,7 @@ export class AiService {
         id: recipe.id,
         name: recipe.name,
         description: recipe.description,
-        mealType: recipe.mealType,
+        mealTypes: recipe.mealTypes,
         ingredients: [...recipe.ingredients]
           .map((recipeIngredient) => recipeIngredient.ingredient.name)
           .sort((a, b) => a.localeCompare(b, "it"))

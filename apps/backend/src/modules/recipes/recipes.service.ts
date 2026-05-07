@@ -27,7 +27,7 @@ export class RecipesService {
   async create(
     userId: string,
     familyId: string,
-    data: { name: string; description?: string; mealType?: MealSlot; ingredientIds?: string[] }
+    data: { name: string; description?: string; mealTypes?: MealSlot[]; ingredientIds?: string[] }
   ) {
     await this.families.requireMembership(userId, familyId);
 
@@ -40,7 +40,7 @@ export class RecipesService {
       data: {
         name: data.name.trim(),
         description: data.description?.trim() || null,
-        mealType: data.mealType || null,
+        mealTypes: data.mealTypes ?? [],
         familyId,
         createdById: userId,
         ingredients: {
@@ -59,7 +59,7 @@ export class RecipesService {
     userId: string,
     familyId: string,
     recipeId: string,
-    data: { name?: string; description?: string; mealType?: MealSlot | null; ingredientIds?: string[] }
+    data: { name?: string; description?: string; mealTypes?: MealSlot[]; ingredientIds?: string[] }
   ) {
     await this.families.requireMembership(userId, familyId);
     await this.requireRecipe(recipeId, familyId);
@@ -84,7 +84,7 @@ export class RecipesService {
         data: {
           ...(data.name && { name: data.name.trim() }),
           ...(data.description !== undefined && { description: data.description?.trim() || null }),
-          ...(data.mealType !== undefined && { mealType: data.mealType })
+          ...(data.mealTypes !== undefined && { mealTypes: data.mealTypes })
         },
         include: {
           ingredients: {
@@ -105,7 +105,7 @@ export class RecipesService {
   async createMany(
     userId: string,
     familyId: string,
-    items: { name: string; description?: string; mealType?: MealSlot; ingredients: string[] }[]
+    items: { name: string; description?: string; mealTypes?: MealSlot[]; ingredients: string[] }[]
   ) {
     await this.families.requireMembership(userId, familyId);
     const createdIds: string[] = [];
@@ -124,7 +124,7 @@ export class RecipesService {
           data: {
             name: item.name.trim(),
             description: item.description?.trim() || null,
-            mealType: item.mealType || null,
+            mealTypes: item.mealTypes ?? [],
             familyId,
             createdById: userId,
             ingredients: {

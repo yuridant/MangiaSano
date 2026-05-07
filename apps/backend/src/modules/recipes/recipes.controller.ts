@@ -7,14 +7,14 @@ import { RecipesService } from "./recipes.service";
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  mealType: mealSlotSchema.optional(),
+  mealTypes: z.array(mealSlotSchema).optional(),
   ingredientIds: z.array(z.string()).optional()
 });
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
-  mealType: mealSlotSchema.nullable().optional(),
+  mealTypes: z.array(mealSlotSchema).optional(),
   ingredientIds: z.array(z.string()).optional()
 });
 
@@ -33,7 +33,7 @@ export class RecipesController {
   @Post()
   create(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
     const data = createSchema.parse(body);
-    return this.recipesService.create(req.user.id, familyId, data as { name: string; mealType?: MealSlot });
+    return this.recipesService.create(req.user.id, familyId, data as { name: string; mealTypes?: MealSlot[] });
   }
 
   @Patch(":id")
@@ -44,7 +44,7 @@ export class RecipesController {
     @Body() body: unknown
   ) {
     const data = updateSchema.parse(body);
-    return this.recipesService.update(req.user.id, familyId, id, data as { mealType?: MealSlot | null });
+    return this.recipesService.update(req.user.id, familyId, id, data as { mealTypes?: MealSlot[] });
   }
 
   @Delete(":id")

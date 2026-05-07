@@ -10,7 +10,7 @@ const PRIMARY_LINKS = [
 ] as const;
 
 const SECONDARY_LINKS = [
-  { to: "/menu", label: "Tutti i menu" },
+  { to: "/menu", label: "Menu settimanale" },
   { to: "/ingredients", label: "Ingredienti" },
   { to: "/analytics", label: "Analytics" },
   { to: "/family", label: "Famiglia" },
@@ -19,7 +19,7 @@ const SECONDARY_LINKS = [
 
 const SIDEBAR_LINKS = [
   { to: "/", label: "Dashboard" },
-  { to: "/menu", label: "Tutti i menu" },
+  { to: "/menu", label: "Menu settimanale" },
   { to: "/menu/generate", label: "Genera con AI" },
   { to: "/recipes", label: "Ricette" },
   { to: "/ingredients", label: "Ingredienti" },

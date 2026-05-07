@@ -45,7 +45,7 @@ export function ManualWeekPlanner({
             {DAYS.map((_, dayOfWeek) => {
               const meal = mealsByDayAndSlot.get(`${dayOfWeek}-${slot}`);
               const isSelected = dayOfWeek === selectedDayOfWeek && slot === selectedMealSlot;
-              const label = meal ? (meal.recipe?.name ?? meal.customName ?? "—") : "Aggiungi";
+              const label = meal ? (meal.recipe?.name ?? meal.customName ?? "—") : "+";
 
               return (
                 <button
@@ -55,12 +55,12 @@ export function ManualWeekPlanner({
                   className={`min-h-[72px] rounded-2xl border px-2 py-2 text-center text-[11px] font-medium leading-tight transition-colors ${
                     isSelected
                       ? "border-sage bg-sage text-white shadow-sm"
-                      : meal
+                    : meal
                         ? "border-sage/20 bg-sage/10 text-sage hover:border-sage hover:bg-sage/15"
                         : "border-slate-200 bg-slate-50 text-slate-400 hover:border-sage/40 hover:bg-sage/5 hover:text-ink"
                   }`}
                 >
-                  {label}
+                  <span className={meal ? "block" : "text-lg leading-none"}>{label}</span>
                 </button>
               );
             })}

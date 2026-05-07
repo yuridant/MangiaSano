@@ -83,7 +83,7 @@ model Recipe {
   id          String    @id @default(cuid())
   name        String
   description String?
-  mealType    MealSlot?
+  mealTypes   MealSlot[] @default([])
   familyId    String
   createdById String
   createdAt   DateTime  @default(now())

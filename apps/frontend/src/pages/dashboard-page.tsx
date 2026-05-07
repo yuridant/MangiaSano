@@ -99,7 +99,7 @@ export function DashboardPage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { to: "/shopping", label: "Lista spesa", icon: "🛒" },
-              { to: "/menu", label: "Tutti i menu", icon: "📅" },
+              { to: "/menu", label: "Menu settimanale", icon: "📅" },
               { to: "/recipes", label: "Ricette", icon: "📖" },
               { to: "/analytics", label: "Statistiche", icon: "📊" }
             ].map((item) => (

@@ -12,7 +12,7 @@ export function RecipesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [mealType, setMealType] = useState<MealSlot | "">("");
+  const [mealTypes, setMealTypes] = useState<MealSlot[]>([]);
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
   const [error, setError] = useState("");
 
@@ -29,7 +29,7 @@ export function RecipesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description?: string; mealType?: MealSlot; ingredientIds: string[] }) =>
+    mutationFn: (data: { name: string; description?: string; mealTypes?: MealSlot[]; ingredientIds: string[] }) =>
       api.post<Recipe>(`/recipes?familyId=${activeFamilyId}`, data, token!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["recipes", activeFamilyId] });
@@ -58,7 +58,7 @@ export function RecipesPage() {
     setEditingId(null);
     setName("");
     setDescription("");
-    setMealType("");
+    setMealTypes([]);
     setSelectedIngredients([]);
     setError("");
   };
@@ -67,7 +67,7 @@ export function RecipesPage() {
     setEditingId(recipe.id);
     setName(recipe.name);
     setDescription(recipe.description ?? "");
-    setMealType(recipe.mealType ?? "");
+    setMealTypes(recipe.mealTypes ?? []);
     setSelectedIngredients(recipe.ingredients.map((ri) => ri.ingredientId));
     setShowForm(true);
   };
@@ -78,13 +78,19 @@ export function RecipesPage() {
     );
   };
 
+  const toggleMealType = (slot: MealSlot) => {
+    setMealTypes((prev) =>
+      prev.includes(slot) ? prev.filter((item) => item !== slot) : [...prev, slot]
+    );
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     const data = {
       name,
       description: description || undefined,
-      mealType: (mealType || undefined) as MealSlot | undefined,
+      mealTypes,
       ingredientIds: selectedIngredients
     };
     if (editingId) {
@@ -126,16 +132,27 @@ export function RecipesPage() {
               rows={2}
               className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none resize-none"
             />
-            <select
-              value={mealType}
-              onChange={(e) => setMealType(e.target.value as MealSlot | "")}
-              className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-            >
-              <option value="">Tipo pasto (opzionale)</option>
-              {SLOTS.map((slot) => (
-                <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>
-              ))}
-            </select>
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Tipologie di pasto
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {SLOTS.map((slot) => (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => toggleMealType(slot)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      mealTypes.includes(slot)
+                        ? "bg-sage text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {SLOT_LABELS[slot]}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Ingredients selector */}
             {ingredientsQuery.isSuccess && (ingredientsQuery.data?.length ?? 0) > 0 && (
@@ -198,11 +215,11 @@ export function RecipesPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <h3 className="font-bold text-ink">{recipe.name}</h3>
-                  {recipe.mealType && (
-                    <span className="app-badge app-badge-sage text-[10px]">
-                      {SLOT_LABELS[recipe.mealType]}
+                  {recipe.mealTypes.map((slot) => (
+                    <span key={slot} className="app-badge app-badge-sage text-[10px]">
+                      {SLOT_LABELS[slot]}
                     </span>
-                  )}
+                  ))}
                 </div>
                 {recipe.description && (
                   <p className="mt-1 text-sm text-slate-500">{recipe.description}</p>

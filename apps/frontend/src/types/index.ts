@@ -39,7 +39,7 @@ export interface Recipe {
   id: string;
   name: string;
   description: string | null;
-  mealType: MealSlot | null;
+  mealTypes: MealSlot[];
   familyId: string;
   createdAt: string;
   updatedAt: string;
@@ -111,7 +111,7 @@ export interface AiMealPlan {
 
 export interface AiResponse {
   weeklyPlan: AiMealPlan[];
-  newRecipes: { name: string; description?: string; mealType?: MealSlot; ingredients: string[] }[];
+  newRecipes: { name: string; description?: string; mealTypes?: MealSlot[]; ingredients: string[] }[];
   newIngredients: { name: string; category?: string }[];
 }
 
