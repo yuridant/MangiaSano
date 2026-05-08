@@ -48,6 +48,8 @@ export function MenuPage() {
   const [manualError, setManualError] = useState("");
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMealIds, setSelectedMealIds] = useState<string[]>([]);
 
   const menuQuery = useQuery({
     queryKey: ["menu", activeFamilyId, weekStart],
@@ -70,6 +72,8 @@ export function MenuPage() {
 
   useEffect(() => {
     resetManualForm();
+    setSelectionMode(false);
+    setSelectedMealIds([]);
   }, [weekStart]);
 
   const resetManualForm = () => {
@@ -127,6 +131,22 @@ export function MenuPage() {
     }
   });
 
+  const removeSelectedMealsMutation = useMutation({
+    mutationFn: async (mealIds: string[]) => {
+      await Promise.all(
+        mealIds.map((mealId) =>
+          api.delete(`/menus/${weekStart}/meals/${mealId}?familyId=${activeFamilyId}`, token!)
+        )
+      );
+    },
+    onSuccess: async () => {
+      await invalidateWeekData();
+      setSelectedMealIds([]);
+      setSelectionMode(false);
+      resetManualForm();
+    }
+  });
+
   const setWeek = (date: Date) => {
     const nextWeekStart = formatDateKey(getMonday(date));
     setSearchParams({ weekStart: nextWeekStart });
@@ -148,6 +168,11 @@ export function MenuPage() {
     formatDateKey(getMonday(new Date())) === weekStart;
   const meals = menuQuery.data?.meals ?? [];
   const recipeOptions = recipesQuery.data ?? [];
+  const selectedMealSlots = new Set(
+    meals
+      .filter((meal) => selectedMealIds.includes(meal.id))
+      .map((meal) => `${meal.dayOfWeek}-${meal.mealSlot}`)
+  );
 
   const startEditMeal = (meal: NonNullable<WeeklyMenu["meals"]>[number]) => {
     setDayOfWeek(meal.dayOfWeek);
@@ -164,6 +189,21 @@ export function MenuPage() {
     }
     setManualError("");
     setManualModalOpen(true);
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((prev) => {
+      if (prev) {
+        setSelectedMealIds([]);
+      }
+      return !prev;
+    });
+  };
+
+  const toggleMealSelection = (mealId: string) => {
+    setSelectedMealIds((prev) =>
+      prev.includes(mealId) ? prev.filter((id) => id !== mealId) : [...prev, mealId]
+    );
   };
 
   return (
@@ -206,15 +246,46 @@ export function MenuPage() {
           <div>
             <h2 className="font-bold text-ink">Gestione manuale pasti</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Clicca una casella del menu per aggiungere, modificare o eliminare il pasto di quello slot.
+              {selectionMode
+                ? "Seleziona uno o più pasti da eliminare. In questa modalità il click non apre la modifica."
+                : "Clicca una casella del menu per aggiungere, modificare o eliminare il pasto di quello slot."}
             </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectionMode && selectedMealIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => removeSelectedMealsMutation.mutate(selectedMealIds)}
+                disabled={removeSelectedMealsMutation.isPending}
+                className="app-btn-xs app-btn-secondary text-rose-600 disabled:opacity-60"
+              >
+                {removeSelectedMealsMutation.isPending
+                  ? "Eliminazione..."
+                  : `Elimina selezionati (${selectedMealIds.length})`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={toggleSelectionMode}
+              className={`app-btn-xs ${selectionMode ? "app-btn-sage" : "app-btn-secondary"}`}
+            >
+              {selectionMode ? "Fine selezione" : "Seleziona"}
+            </button>
           </div>
         </div>
 
         <WeekGrid
           meals={meals}
           weekStart={weekStart}
+          selectedSlots={selectionMode ? selectedMealSlots : undefined}
           onCellClick={(nextDayOfWeek, nextMealSlot, meal) => {
+            if (selectionMode) {
+              if (meal) {
+                toggleMealSelection(meal.id);
+              }
+              return;
+            }
+
             if (meal) {
               startEditMeal(meal);
               return;
