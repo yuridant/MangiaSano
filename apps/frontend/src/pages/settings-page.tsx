@@ -25,7 +25,7 @@ function AppearanceSettingsSection() {
         <p className="mt-2 text-sm text-slate-500">
           Scegli il tono visivo dell&apos;app. La palette selezionata viene salvata solo per questo browser.
         </p>
-        <div className="mt-5 grid gap-4 xl:grid-cols-3">
+        <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
           {themes.map((option) => {
             const isActive = option.id === theme;
             return (

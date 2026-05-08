@@ -24,34 +24,50 @@
   color-scheme: light;
 }
 
-[data-theme="mediterranea"] {
-  --color-ink: 36 49 58;
-  --color-sage: 98 122 58;
-  --color-cream: 252 244 232;
-  --color-terra: 200 108 76;
-  --color-herb: 77 97 45;
-  --color-wheat: 224 184 93;
-  --bg-left-glow: rgba(98, 122, 58, 0.13);
-  --bg-right-glow: rgba(200, 108, 76, 0.11);
-  --bg-from: #fcf4e8;
-  --bg-to: #eef4ea;
-  --focus-ring: rgba(98, 122, 58, 0.8);
-  --panel-shadow: 0 18px 60px rgba(36, 49, 58, 0.10);
+[data-theme="mediterraneo-solare"] {
+  --color-ink: 34 49 63;
+  --color-sage: 199 101 60;
+  --color-cream: 252 241 227;
+  --color-terra: 224 184 79;
+  --color-herb: 157 96 47;
+  --color-wheat: 227 141 87;
+  --bg-left-glow: rgba(199, 101, 60, 0.16);
+  --bg-right-glow: rgba(224, 184, 79, 0.16);
+  --bg-from: #fcf1e3;
+  --bg-to: #fff8ef;
+  --focus-ring: rgba(199, 101, 60, 0.8);
+  --panel-shadow: 0 18px 60px rgba(34, 49, 63, 0.12);
 }
 
-[data-theme="serra-moderna"] {
-  --color-ink: 29 40 48;
-  --color-sage: 78 138 120;
-  --color-cream: 247 245 238;
-  --color-terra: 212 141 99;
-  --color-herb: 61 110 96;
-  --color-wheat: 217 200 163;
-  --bg-left-glow: rgba(78, 138, 120, 0.14);
-  --bg-right-glow: rgba(212, 141, 99, 0.10);
-  --bg-from: #f7f5ee;
-  --bg-to: #eaf3ef;
-  --focus-ring: rgba(78, 138, 120, 0.8);
-  --panel-shadow: 0 18px 60px rgba(29, 40, 48, 0.10);
+[data-theme="serra-notturna"] {
+  --color-ink: 234 244 238;
+  --color-sage: 36 92 79;
+  --color-cream: 16 36 31;
+  --color-terra: 143 203 155;
+  --color-herb: 47 116 100;
+  --color-wheat: 110 179 139;
+  --bg-left-glow: rgba(36, 92, 79, 0.44);
+  --bg-right-glow: rgba(143, 203, 155, 0.18);
+  --bg-from: #10241f;
+  --bg-to: #19352d;
+  --focus-ring: rgba(143, 203, 155, 0.85);
+  --panel-shadow: 0 22px 68px rgba(0, 0, 0, 0.28);
+  color-scheme: dark;
+}
+
+[data-theme="frutteto-pop"] {
+  --color-ink: 43 31 26;
+  --color-sage: 229 107 93;
+  --color-cream: 255 246 238;
+  --color-terra: 127 176 105;
+  --color-herb: 99 148 77;
+  --color-wheat: 242 193 78;
+  --bg-left-glow: rgba(229, 107, 93, 0.18);
+  --bg-right-glow: rgba(127, 176, 105, 0.18);
+  --bg-from: #fff6ee;
+  --bg-to: #fffdf9;
+  --focus-ring: rgba(229, 107, 93, 0.82);
+  --panel-shadow: 0 18px 60px rgba(43, 31, 26, 0.12);
 }
 
 html {

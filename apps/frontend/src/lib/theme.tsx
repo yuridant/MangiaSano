@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type ThemeId = "mercato-fresco" | "mediterranea" | "serra-moderna";
+export type ThemeId = "mercato-fresco" | "mediterraneo-solare" | "serra-notturna" | "frutteto-pop";
 
 export type ThemeDefinition = {
   id: ThemeId;
@@ -16,20 +16,26 @@ export const THEMES: ThemeDefinition[] = [
   {
     id: "mercato-fresco",
     name: "Mercato Fresco",
-    description: "Verdure di stagione, luce morbida e un tono naturale piu' distintivo.",
+    description: "Naturale ma deciso, ispirato a ortofrutta, erbe fresche e luce del mercato.",
     preview: ["#1F2A24", "#5E8B63", "#D9A35F"]
   },
   {
-    id: "mediterranea",
-    name: "Mediterranea",
-    description: "Piu' calda e italiana, tra basilico, terracotta e tavola di casa.",
-    preview: ["#24313A", "#627A3A", "#C86C4C"]
+    id: "mediterraneo-solare",
+    name: "Mediterraneo Solare",
+    description: "Piu' caldo e luminoso, tra tavola estiva, terracotta e grano dorato.",
+    preview: ["#22313F", "#C7653C", "#E0B84F"]
   },
   {
-    id: "serra-moderna",
-    name: "Serra Moderna",
-    description: "Piacevolmente piu' tech, pulita e adatta a un wellness contemporaneo.",
-    preview: ["#1D2830", "#4E8A78", "#D48D63"]
+    id: "serra-notturna",
+    name: "Serra Notturna",
+    description: "Petrolio e verde scuro per un look premium, piu' profondo e memorabile.",
+    preview: ["#10241F", "#245C4F", "#8FCB9B"]
+  },
+  {
+    id: "frutteto-pop",
+    name: "Frutteto Pop",
+    description: "Energia, frutta matura e accenti vivaci per un carattere piu' giocoso.",
+    preview: ["#2B1F1A", "#E56B5D", "#7FB069"]
   }
 ];
 
@@ -45,10 +51,16 @@ function isThemeId(value: string | null): value is ThemeId {
   return THEMES.some((theme) => theme.id === value);
 }
 
+function normalizeStoredTheme(value: string | null): ThemeId | null {
+  if (value === "mediterranea") return "mediterraneo-solare";
+  if (value === "serra-moderna") return "serra-notturna";
+  return isThemeId(value) ? value : null;
+}
+
 export function getInitialTheme(): ThemeId {
   if (typeof window === "undefined") return DEFAULT_THEME;
   const stored = window.localStorage.getItem(STORAGE_KEY);
-  return isThemeId(stored) ? stored : DEFAULT_THEME;
+  return normalizeStoredTheme(stored) ?? DEFAULT_THEME;
 }
 
 function applyTheme(theme: ThemeId) {
