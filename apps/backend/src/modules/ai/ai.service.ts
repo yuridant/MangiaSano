@@ -526,20 +526,40 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         select: { id: true }
       });
 
-      const finalMeals = normalizedResponse.weeklyPlan.map((meal) => {
-        const recipeId =
-          meal.recipeId ?? recipeIdsByName.get(this.normalizeRecipeName(meal.recipeName));
+      const existingRecipeIds = new Set(existingRecipes.map((recipe) => recipe.id));
+      const finalMeals: Array<{ dayOfWeek: number; mealSlot: MealSlot; recipeId: string }> = [];
+
+      for (const meal of normalizedResponse.weeklyPlan) {
+        const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
+        let recipeId =
+          meal.recipeId && existingRecipeIds.has(meal.recipeId)
+            ? meal.recipeId
+            : recipeIdsByName.get(normalizedRecipeName);
 
         if (!recipeId) {
-          throw new BadRequestException(`Impossibile risolvere la ricetta "${meal.recipeName}" per il salvataggio.`);
+          const inferredMealTypes = [
+            ...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>([meal.mealSlot]))
+          ];
+          const createdRecipe = await tx.recipe.create({
+            data: {
+              name: meal.recipeName.trim(),
+              description: meal.recipeDescription?.trim() || null,
+              mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
+              familyId,
+              createdById: userId
+            },
+            select: { id: true, name: true }
+          });
+          recipeId = createdRecipe.id;
+          recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
         }
 
-        return {
+        finalMeals.push({
           dayOfWeek: meal.dayOfWeek,
           mealSlot: meal.mealSlot,
           recipeId
-        };
-      });
+        });
+      }
 
       const finalMealSlotKeys = new Set(
         finalMeals.map((meal) => this.getSlotKey(meal.dayOfWeek, meal.mealSlot))
