@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { formatDateKey, formatWeekRange, getMonday } from "../../lib/week";
 
 interface WeekNavigatorProps {
@@ -17,6 +18,48 @@ export function WeekNavigator({
   const [calendarOpen, setCalendarOpen] = useState(false);
   const currentWeekStart = useMemo(() => formatDateKey(getMonday(new Date())), []);
   const isCurrentWeek = currentWeekStart === weekStart;
+  const modalContent =
+    calendarOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/45 px-4 py-6">
+            <div className="w-full max-w-sm rounded-[30px] border border-slate-200 bg-white p-6 text-left shadow-2xl">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Scegli un giorno per aprire la sua settimana
+              </p>
+              <input
+                type="date"
+                value={weekStart}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  onChangeWeekStart(formatDateKey(getMonday(new Date(`${e.target.value}T00:00:00`))));
+                  setCalendarOpen(false);
+                }}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-ink focus:border-sage focus:outline-none"
+              />
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChangeWeekStart(currentWeekStart);
+                    setCalendarOpen(false);
+                  }}
+                  className="app-btn-xs app-btn-sage"
+                >
+                  Oggi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarOpen(false)}
+                  className="app-btn-xs app-btn-secondary"
+                >
+                  Chiudi
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
 
   const shiftWeek = (deltaDays: number) => {
     const next = new Date(`${weekStart}T00:00:00`);
@@ -50,45 +93,7 @@ export function WeekNavigator({
           Succ. →
         </button>
       </div>
-
-      {calendarOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
-          <div className="w-full max-w-sm rounded-[30px] border border-slate-200 bg-white p-6 text-left shadow-2xl">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Scegli un giorno per aprire la sua settimana
-            </p>
-            <input
-              type="date"
-              value={weekStart}
-              onChange={(e) => {
-                if (!e.target.value) return;
-                onChangeWeekStart(formatDateKey(getMonday(new Date(`${e.target.value}T00:00:00`))));
-                setCalendarOpen(false);
-              }}
-              className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-ink focus:border-sage focus:outline-none"
-            />
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onChangeWeekStart(currentWeekStart);
-                  setCalendarOpen(false);
-                }}
-                className="app-btn-xs app-btn-sage"
-              >
-                Oggi
-              </button>
-              <button
-                type="button"
-                onClick={() => setCalendarOpen(false)}
-                className="app-btn-xs app-btn-secondary"
-              >
-                Chiudi
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {modalContent}
     </>
   );
 }
