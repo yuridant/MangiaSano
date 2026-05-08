@@ -15,11 +15,12 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
   for (const meal of sourceMeals) {
     mealsByDayAndSlot.set(`${meal.dayOfWeek}-${meal.mealSlot}`, meal);
   }
+  const gridTemplateColumns = "92px repeat(7, minmax(112px, 1fr))";
 
   return (
     <div className="app-panel overflow-x-auto p-4">
-      <div className="min-w-[560px]">
-        <div className="mb-3 grid grid-cols-[80px_repeat(7,1fr)] gap-1">
+      <div className="min-w-[900px]">
+        <div className="mb-3 grid gap-2" style={{ gridTemplateColumns }}>
           <div />
           {DAYS.map((day, i) => {
             const d = new Date(new Date(weekStart + "T00:00:00").getTime() + i * 86400000);
@@ -36,8 +37,8 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
         </div>
 
         {SLOTS.map((slot) => (
-          <div key={slot} className="mb-1.5 grid grid-cols-[80px_repeat(7,1fr)] gap-1">
-            <div className="flex items-center pr-2">
+          <div key={slot} className="mb-2 grid gap-2" style={{ gridTemplateColumns }}>
+            <div className="flex min-h-[72px] items-center pr-2">
               <span className="text-xs font-semibold text-slate-400">{SLOT_LABELS[slot]}</span>
             </div>
             {DAYS.map((_, dayIndex) => {
@@ -58,7 +59,7 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
                   key={dayIndex}
                   type="button"
                   onClick={() => onCellClick?.(dayIndex, slot, meal ?? null)}
-                  className={`min-h-[62px] rounded-2xl border px-2 py-2 text-center text-[10px] font-medium leading-tight transition ${
+                  className={`min-h-[72px] w-full rounded-2xl border px-2 py-2 text-center text-[10px] font-medium leading-tight transition ${
                     cellClasses
                   } ${onCellClick ? "hover:-translate-y-[1px]" : "cursor-default"}`}
                 >

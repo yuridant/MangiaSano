@@ -28,6 +28,7 @@ model Family {
   allergyNotes    String?
   intoleranceNotes String?
   preferenceNotes String?
+  aiExperimentMode AiExperimentMode?
   createdAt       DateTime @default(now())
 
   memberships   FamilyMembership[]
@@ -218,4 +219,10 @@ enum MealSlot {
   lunch
   snack_afternoon
   dinner
+}
+
+enum AiExperimentMode {
+  off
+  alternate
+  random
 }

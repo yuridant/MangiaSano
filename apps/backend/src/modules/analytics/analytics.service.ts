@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import { MEAL_SLOT_ORDER } from "../../common/meal-slots";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AiService } from "../ai/ai.service";
@@ -15,7 +15,7 @@ export class AnalyticsService {
   async getSummary(userId: string, familyId: string) {
     await this.families.requireMembership(userId, familyId);
 
-    const [topRecipes, topIngredients, mealSlotDistribution, totalMenus, totalRecipes, totalIngredients, totalMealsPlanned, weeklyCoverage, aiUsage] = await Promise.all([
+    const [topRecipes, topIngredients, mealSlotDistribution, totalMenus, totalRecipes, totalIngredients, totalMealsPlanned, weeklyCoverage, aiUsage, experimentConfig] = await Promise.all([
       this.getTopRecipes(familyId),
       this.getTopIngredients(familyId),
       this.getMealSlotDistribution(familyId),
@@ -24,7 +24,8 @@ export class AnalyticsService {
       this.prisma.ingredient.count({ where: { familyId } }),
       this.prisma.menuMeal.count({ where: { weeklyMenu: { familyId } } }),
       this.getWeeklyCoverage(familyId),
-      this.getAiUsageSummary(familyId)
+      this.getAiUsageSummary(familyId),
+      this.aiService.getModelConfigForFamily(familyId)
     ]);
 
     return {
@@ -44,8 +45,31 @@ export class AnalyticsService {
       weeklyCoverage,
       aiUsage: {
         ...aiUsage,
-        experiment: this.getExperimentConfig()
+        experiment: {
+          mode: experimentConfig.experimentMode,
+          primaryModel: experimentConfig.primaryModel,
+          secondaryModel: experimentConfig.secondaryModel
+        }
       }
+    };
+  }
+
+  async updateExperimentMode(userId: string, familyId: string, mode: "off" | "alternate" | "random") {
+    const membership = await this.families.requireMembership(userId, familyId);
+    if (membership.role !== "owner") {
+      throw new ForbiddenException("Solo il proprietario può modificare l'esperimento AI.");
+    }
+
+    await this.prisma.family.update({
+      where: { id: familyId },
+      data: { aiExperimentMode: mode }
+    });
+
+    const config = await this.aiService.getModelConfigForFamily(familyId);
+    return {
+      mode: config.experimentMode,
+      primaryModel: config.primaryModel,
+      secondaryModel: config.secondaryModel
     };
   }
 
@@ -266,15 +290,6 @@ export class AnalyticsService {
         requestBreakdown: log.requestBreakdown,
         errorMessage: log.errorMessage
       }))
-    };
-  }
-
-  private getExperimentConfig() {
-    const config = this.aiService.getModelConfig();
-    return {
-      mode: config.experimentMode,
-      primaryModel: config.primaryModel,
-      secondaryModel: config.secondaryModel
     };
   }
 

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { AnalyticsSummary } from "../types";
@@ -60,11 +60,24 @@ function getVerdictStyle(status: AnalyticsSummary["aiUsage"]["experimentVerdict"
 
 export function AnalyticsPage() {
   const { token, activeFamilyId } = useAuth();
+  const queryClient = useQueryClient();
 
   const analyticsQuery = useQuery({
     queryKey: ["analytics", activeFamilyId],
     queryFn: () => api.get<AnalyticsSummary>(`/analytics?familyId=${activeFamilyId}`, token!),
     enabled: !!token && !!activeFamilyId
+  });
+
+  const experimentMutation = useMutation({
+    mutationFn: (mode: "off" | "alternate" | "random") =>
+      api.patch<{ mode: "off" | "alternate" | "random"; primaryModel: string; secondaryModel: string }>(
+        `/analytics/experiment?familyId=${activeFamilyId}`,
+        { mode },
+        token!
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analytics", activeFamilyId] });
+    }
   });
 
   if (analyticsQuery.isLoading) {
@@ -232,13 +245,40 @@ export function AnalyticsPage() {
             <p className="mt-1 text-sm text-slate-500">
               Stima basata sui token registrati e sul modello usato per ogni richiesta.
             </p>
-            <p className="mt-2 text-xs text-slate-400">
-              Modalita attiva: <span className="font-semibold text-ink">{data.aiUsage.experiment.mode}</span>
-              {" • "}
-              A: {data.aiUsage.experiment.primaryModel}
-              {" • "}
-              B: {data.aiUsage.experiment.secondaryModel}
-            </p>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <label className="block">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Modalita esperimento
+                </span>
+                <select
+                  value={data.aiUsage.experiment.mode}
+                  onChange={(e) =>
+                    experimentMutation.mutate(e.target.value as "off" | "alternate" | "random")
+                  }
+                  disabled={experimentMutation.isPending}
+                  className="mt-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-ink focus:border-sage focus:outline-none disabled:opacity-60"
+                >
+                  <option value="off">Off</option>
+                  <option value="alternate">Alternate</option>
+                  <option value="random">Random</option>
+                </select>
+              </label>
+              <div className="text-xs text-slate-400">
+                <p>
+                  A: <span className="font-semibold text-ink">{data.aiUsage.experiment.primaryModel}</span>
+                </p>
+                <p>
+                  B: <span className="font-semibold text-ink">{data.aiUsage.experiment.secondaryModel}</span>
+                </p>
+              </div>
+            </div>
+            {experimentMutation.isError && (
+              <p className="mt-2 text-xs text-rose-500">
+                {experimentMutation.error instanceof Error
+                  ? experimentMutation.error.message
+                  : "Impossibile aggiornare la modalita dell'esperimento."}
+              </p>
+            )}
           </div>
           <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Richieste riuscite</p>

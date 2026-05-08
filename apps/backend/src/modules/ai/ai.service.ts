@@ -107,7 +107,9 @@ Principi guida:
 - Varia le fonti proteiche (legumi, pesce, carne magra, uova)
 - Includi verdure ad ogni pasto principale
 - Limita zuccheri semplici, pane bianco, riso raffinato
-- Privilegia ingredienti di stagione, soprattutto frutta, verdura e prodotti freschi, così da favorire una spesa locale al mercato e ricette più fresche`;
+- Privilegia ingredienti di stagione, soprattutto frutta, verdura e prodotti freschi, così da favorire una spesa locale al mercato e ricette più fresche
+- Rispetta rigorosamente il tipo di pasto: colazioni da colazione, spuntini leggeri e realistici da spuntino, pranzi e cene da pasto principale
+- Per gli spuntini evita piatti da pranzo o cena come filetti, secondi completi, primi piatti, zuppe complete o portate strutturate`;
 
 @Injectable()
 export class AiService {
@@ -186,14 +188,16 @@ export class AiService {
 
     const promptSections = {
       goal: `Obiettivo nutrizionale: ${goal}`,
-      existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id):\n${JSON.stringify(context.existingRecipes)}`,
+      existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id e rispettando SEMPRE i loro mealTypes quando presenti):\n${JSON.stringify(context.existingRecipes)}`,
       existingIngredients: `Ingredienti già presenti nell'app:\n${JSON.stringify(context.existingIngredients)}`,
       dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(dietaryProfile)}`,
       requestedSlots: `Genera un piano per questi slot: ${slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(slots)}`,
       rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
 Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
-Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes.
+Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes e non assegnarla mai a uno slot incompatibile con i suoi mealTypes.
 Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
+Per ogni nuova ricetta compila mealTypes in modo coerente con gli slot in cui la usi.
+Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
 Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
 Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
 Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`
@@ -232,7 +236,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
       const validated = this.validateAiResponse(
         parsed,
-        recipes.map((recipe) => ({ id: recipe.id, name: recipe.name })),
+        recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
         slots,
         { requireCompleteCoverage: true }
       );
@@ -331,7 +335,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     const [existingRecipes, existingIngredients] = await Promise.all([
       this.prisma.recipe.findMany({
         where: { familyId },
-        select: { id: true, name: true }
+        select: { id: true, name: true, mealTypes: true }
       }),
       this.prisma.ingredient.findMany({
         where: { familyId },
@@ -567,7 +571,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     return this.client;
   }
 
-  getModelConfig() {
+  private getBaseModelConfig() {
     const primaryModel =
       this.config.get<string>("OPENAI_MODEL_PRIMARY") ??
       this.config.get<string>("OPENAI_MODEL") ??
@@ -582,8 +586,23 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     };
   }
 
+  async getModelConfigForFamily(familyId?: string) {
+    const baseConfig = this.getBaseModelConfig();
+    if (!familyId) return baseConfig;
+
+    const family = await this.prisma.family.findUnique({
+      where: { id: familyId },
+      select: { aiExperimentMode: true }
+    });
+
+    return {
+      ...baseConfig,
+      experimentMode: family?.aiExperimentMode ?? baseConfig.experimentMode
+    };
+  }
+
   private async selectModelForRequest(familyId: string): Promise<ModelSelection> {
-    const { experimentMode, primaryModel, secondaryModel } = this.getModelConfig();
+    const { experimentMode, primaryModel, secondaryModel } = await this.getModelConfigForFamily(familyId);
 
     if (experimentMode === "off" || primaryModel === secondaryModel) {
       return {
@@ -746,7 +765,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private validateAiResponse(
     response: AiResponse,
-    existingRecipes: { id: string; name: string }[],
+    existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[],
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
     options: { requireCompleteCoverage: boolean }
   ) {
@@ -776,10 +795,20 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
       if (meal.recipeId) {
         if (existingRecipeIdsSet.has(meal.recipeId)) {
+          const exactRecipe = existingRecipes.find((recipe) => recipe.id === meal.recipeId);
+          if (exactRecipe && exactRecipe.mealTypes.length > 0 && !exactRecipe.mealTypes.includes(meal.mealSlot)) {
+            throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+          }
           continue;
         }
 
         if (matchedExistingRecipe) {
+          if (
+            matchedExistingRecipe.mealTypes.length > 0 &&
+            !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
+          ) {
+            throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+          }
           meal.recipeId = matchedExistingRecipe.id;
           meal.recipeName = matchedExistingRecipe.name;
           continue;
@@ -794,6 +823,12 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
 
       if (matchedExistingRecipe) {
+        if (
+          matchedExistingRecipe.mealTypes.length > 0 &&
+          !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
+        ) {
+          throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+        }
         meal.recipeId = matchedExistingRecipe.id;
         meal.recipeName = matchedExistingRecipe.name;
         continue;
@@ -801,6 +836,16 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
       if (!newRecipeNames.has(normalizedRecipeName)) {
         throw new BadRequestException("La risposta AI contiene una nuova ricetta non presente in newRecipes.");
+      }
+
+      const matchingNewRecipe = response.newRecipes.find(
+        (recipe) => this.normalizeRecipeName(recipe.name) === normalizedRecipeName
+      );
+      if (
+        matchingNewRecipe?.mealTypes?.length &&
+        !matchingNewRecipe.mealTypes.includes(meal.mealSlot)
+      ) {
+        throw new BadRequestException("La risposta AI assegna una nuova ricetta a uno slot incompatibile.");
       }
     }
 
