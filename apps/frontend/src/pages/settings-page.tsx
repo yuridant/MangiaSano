@@ -22,7 +22,7 @@ function AppearanceSettingsSection() {
     <div className="flex flex-col gap-5">
       <div className="app-panel">
         <h2 className="text-lg font-bold text-ink">Palette</h2>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="app-muted mt-2 text-sm">
           Scegli il tono visivo dell&apos;app. La palette selezionata viene salvata solo per questo browser.
         </p>
         <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
@@ -35,7 +35,7 @@ function AppearanceSettingsSection() {
                 onClick={() => setTheme(option.id)}
                 className={`rounded-[1.8rem] border p-4 text-left transition ${
                   isActive
-                    ? "border-sage bg-sage/10 shadow-[0_18px_42px_rgba(94,139,99,0.16)]"
+                    ? "border-sage bg-sage/10 shadow-panel"
                     : "border-white/80 bg-white/75 hover:bg-white/90"
                 }`}
               >
@@ -45,7 +45,7 @@ function AppearanceSettingsSection() {
                     {isActive ? "Attiva" : "Seleziona"}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-slate-500">{option.description}</p>
+                <p className="app-muted mt-2 text-sm">{option.description}</p>
                 <div className="mt-4 flex gap-2">
                   {option.preview.map((color) => (
                     <span

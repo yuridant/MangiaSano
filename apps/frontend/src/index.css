@@ -10,6 +10,25 @@
   --color-terra: 232 154 107;
   --color-herb: 71 108 76;
   --color-wheat: 217 163 95;
+  --panel-bg: rgba(255, 253, 248, 0.84);
+  --panel-border: rgba(255, 255, 255, 0.74);
+  --subpanel-bg: rgba(245, 251, 244, 0.72);
+  --empty-bg: rgba(245, 251, 244, 0.72);
+  --muted-text: #64748b;
+  --secondary-border: rgba(203, 213, 225, 0.9);
+  --secondary-bg: rgba(255, 255, 255, 0.82);
+  --secondary-hover-bg: rgba(255, 255, 255, 0.96);
+  --badge-bg: rgba(148, 163, 184, 0.14);
+  --badge-text: #475569;
+  --modal-bg: rgba(255, 255, 255, 0.95);
+  --modal-footer-bg: rgba(255, 255, 255, 0.84);
+  --nav-bg: #1f2a24;
+  --nav-card-bg: rgba(255, 255, 255, 0.10);
+  --nav-active-bg: #fff9f0;
+  --nav-active-text: #1f2a24;
+  --nav-inactive-text: rgba(255, 255, 255, 0.76);
+  --mobile-nav-bg: rgba(255, 255, 255, 0.95);
+  --mobile-nav-shadow: 0 26px 60px rgba(31, 42, 36, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --bg-left-glow: rgba(94, 139, 99, 0.14);
   --bg-right-glow: rgba(217, 163, 95, 0.12);
   --bg-from: #fbf7ec;
@@ -31,6 +50,25 @@
   --color-terra: 224 184 79;
   --color-herb: 157 96 47;
   --color-wheat: 227 141 87;
+  --panel-bg: rgba(255, 248, 238, 0.88);
+  --panel-border: rgba(255, 244, 235, 0.96);
+  --subpanel-bg: rgba(255, 237, 220, 0.76);
+  --empty-bg: rgba(255, 237, 220, 0.76);
+  --muted-text: #8b6a55;
+  --secondary-border: rgba(235, 200, 173, 0.9);
+  --secondary-bg: rgba(255, 251, 246, 0.86);
+  --secondary-hover-bg: rgba(255, 255, 255, 0.98);
+  --badge-bg: rgba(199, 101, 60, 0.14);
+  --badge-text: #8f4e33;
+  --modal-bg: rgba(255, 248, 240, 0.97);
+  --modal-footer-bg: rgba(255, 244, 235, 0.88);
+  --nav-bg: #22313f;
+  --nav-card-bg: rgba(255, 255, 255, 0.10);
+  --nav-active-bg: #fff2e4;
+  --nav-active-text: #22313f;
+  --nav-inactive-text: rgba(255, 255, 255, 0.78);
+  --mobile-nav-bg: rgba(255, 248, 240, 0.95);
+  --mobile-nav-shadow: 0 26px 60px rgba(34, 49, 63, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --bg-left-glow: rgba(199, 101, 60, 0.16);
   --bg-right-glow: rgba(224, 184, 79, 0.16);
   --bg-from: #fcf1e3;
@@ -40,34 +78,71 @@
 }
 
 [data-theme="serra-notturna"] {
-  --color-ink: 234 244 238;
-  --color-sage: 36 92 79;
-  --color-cream: 16 36 31;
-  --color-terra: 143 203 155;
-  --color-herb: 47 116 100;
-  --color-wheat: 110 179 139;
-  --bg-left-glow: rgba(36, 92, 79, 0.44);
-  --bg-right-glow: rgba(143, 203, 155, 0.18);
-  --bg-from: #10241f;
-  --bg-to: #19352d;
-  --focus-ring: rgba(143, 203, 155, 0.85);
-  --panel-shadow: 0 22px 68px rgba(0, 0, 0, 0.28);
-  color-scheme: dark;
+  --color-ink: 27 39 71;
+  --color-sage: 15 159 183;
+  --color-cream: 240 249 255;
+  --color-terra: 122 231 199;
+  --color-herb: 10 112 145;
+  --color-wheat: 114 91 255;
+  --panel-bg: rgba(246, 251, 255, 0.88);
+  --panel-border: rgba(219, 241, 255, 0.98);
+  --subpanel-bg: rgba(227, 245, 255, 0.78);
+  --empty-bg: rgba(227, 245, 255, 0.78);
+  --muted-text: #5d7094;
+  --secondary-border: rgba(180, 214, 240, 0.96);
+  --secondary-bg: rgba(255, 255, 255, 0.88);
+  --secondary-hover-bg: rgba(255, 255, 255, 0.98);
+  --badge-bg: rgba(15, 159, 183, 0.14);
+  --badge-text: #0a708f;
+  --modal-bg: rgba(247, 252, 255, 0.97);
+  --modal-footer-bg: rgba(233, 247, 255, 0.9);
+  --nav-bg: #1b2747;
+  --nav-card-bg: rgba(122, 231, 199, 0.12);
+  --nav-active-bg: #e9fbff;
+  --nav-active-text: #1b2747;
+  --nav-inactive-text: rgba(240, 249, 255, 0.78);
+  --mobile-nav-bg: rgba(246, 251, 255, 0.96);
+  --mobile-nav-shadow: 0 26px 60px rgba(27, 39, 71, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  --bg-left-glow: rgba(15, 159, 183, 0.20);
+  --bg-right-glow: rgba(114, 91, 255, 0.16);
+  --bg-from: #eef8ff;
+  --bg-to: #edfdf8;
+  --focus-ring: rgba(15, 159, 183, 0.84);
+  --panel-shadow: 0 18px 60px rgba(27, 39, 71, 0.14);
 }
 
 [data-theme="frutteto-pop"] {
-  --color-ink: 43 31 26;
-  --color-sage: 229 107 93;
+  --color-ink: 75 33 66;
+  --color-sage: 242 95 92;
   --color-cream: 255 246 238;
-  --color-terra: 127 176 105;
-  --color-herb: 99 148 77;
+  --color-terra: 155 197 61;
+  --color-herb: 197 64 95;
   --color-wheat: 242 193 78;
-  --bg-left-glow: rgba(229, 107, 93, 0.18);
-  --bg-right-glow: rgba(127, 176, 105, 0.18);
-  --bg-from: #fff6ee;
-  --bg-to: #fffdf9;
-  --focus-ring: rgba(229, 107, 93, 0.82);
-  --panel-shadow: 0 18px 60px rgba(43, 31, 26, 0.12);
+  --panel-bg: rgba(255, 249, 252, 0.88);
+  --panel-border: rgba(255, 235, 242, 0.96);
+  --subpanel-bg: rgba(255, 233, 241, 0.72);
+  --empty-bg: rgba(255, 233, 241, 0.72);
+  --muted-text: #8a5876;
+  --secondary-border: rgba(244, 203, 220, 0.94);
+  --secondary-bg: rgba(255, 252, 253, 0.88);
+  --secondary-hover-bg: rgba(255, 255, 255, 0.98);
+  --badge-bg: rgba(242, 95, 92, 0.14);
+  --badge-text: #b53f56;
+  --modal-bg: rgba(255, 249, 252, 0.97);
+  --modal-footer-bg: rgba(255, 238, 246, 0.9);
+  --nav-bg: #4b2142;
+  --nav-card-bg: rgba(255, 255, 255, 0.10);
+  --nav-active-bg: #fff1f6;
+  --nav-active-text: #4b2142;
+  --nav-inactive-text: rgba(255, 241, 246, 0.82);
+  --mobile-nav-bg: rgba(255, 248, 251, 0.96);
+  --mobile-nav-shadow: 0 26px 60px rgba(75, 33, 66, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  --bg-left-glow: rgba(242, 95, 92, 0.18);
+  --bg-right-glow: rgba(155, 197, 61, 0.20);
+  --bg-from: #fff1f4;
+  --bg-to: #fffaf1;
+  --focus-ring: rgba(242, 95, 92, 0.82);
+  --panel-shadow: 0 18px 60px rgba(75, 33, 66, 0.14);
 }
 
 html {
@@ -111,19 +186,26 @@ input, select, textarea, button, a {
 
 @layer components {
   .app-panel {
-    @apply rounded-[2rem] border border-white/70 bg-white/80 p-6 shadow-panel backdrop-blur;
+    @apply rounded-[2rem] p-6 shadow-panel backdrop-blur;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
   }
 
   .app-page-header {
-    @apply relative overflow-hidden rounded-[2.25rem] border border-white/70 bg-white/80 p-6 shadow-panel backdrop-blur sm:p-7;
+    @apply relative overflow-hidden rounded-[2.25rem] p-6 shadow-panel backdrop-blur sm:p-7;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
   }
 
   .app-subpanel {
-    @apply rounded-3xl bg-white/60 p-4;
+    @apply rounded-3xl p-4;
+    background: var(--subpanel-bg);
   }
 
   .app-empty {
-    @apply rounded-3xl bg-white/60 p-5 text-sm text-slate-500;
+    @apply rounded-3xl p-5 text-sm;
+    background: var(--empty-bg);
+    color: var(--muted-text);
   }
 
   .app-btn {
@@ -147,7 +229,13 @@ input, select, textarea, button, a {
   }
 
   .app-btn-secondary {
-    @apply border border-slate-200 bg-white/80 text-slate-700 hover:bg-white;
+    @apply border text-slate-700;
+    border-color: var(--secondary-border);
+    background: var(--secondary-bg);
+  }
+
+  .app-btn-secondary:hover {
+    background: var(--secondary-hover-bg);
   }
 
   .app-btn-danger {
@@ -155,7 +243,9 @@ input, select, textarea, button, a {
   }
 
   .app-badge {
-    @apply inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700;
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold;
+    background: var(--badge-bg);
+    color: var(--badge-text);
   }
 
   .app-badge-sage {
@@ -175,7 +265,9 @@ input, select, textarea, button, a {
   }
 
   .app-modal-shell {
-    @apply absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col overflow-hidden rounded-t-[2rem] border border-white/10 bg-white/95 shadow-2xl backdrop-blur md:left-1/2 md:top-1/2 md:max-h-[88vh] md:w-[calc(100vw-2rem)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem] md:border-white/70;
+    @apply absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col overflow-hidden rounded-t-[2rem] shadow-2xl backdrop-blur md:left-1/2 md:top-1/2 md:max-h-[88vh] md:w-[calc(100vw-2rem)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem];
+    border: 1px solid var(--panel-border);
+    background: var(--modal-bg);
     height: min(92vh, 92dvh);
     max-height: min(92vh, 92dvh);
   }
@@ -192,14 +284,16 @@ input, select, textarea, button, a {
   }
 
   .app-modal-footer {
-    @apply border-t border-slate-200 bg-white/80 px-5 py-4 backdrop-blur sm:px-6;
+    @apply border-t px-5 py-4 backdrop-blur sm:px-6;
+    border-color: var(--secondary-border);
+    background: var(--modal-footer-bg);
   }
 
   .app-mobile-nav {
-    @apply rounded-[1.9rem] border border-white/85 bg-white/95 p-2 shadow-2xl backdrop-blur-xl;
-    box-shadow:
-      0 26px 60px rgba(15, 23, 42, 0.14),
-      inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    @apply rounded-[1.9rem] border p-2 shadow-2xl backdrop-blur-xl;
+    border-color: var(--panel-border);
+    background: var(--mobile-nav-bg);
+    box-shadow: var(--mobile-nav-shadow);
   }
 
   .app-mobile-nav-item {
@@ -216,5 +310,36 @@ input, select, textarea, button, a {
 
   .app-soft-divider {
     @apply border-t border-slate-200/80;
+  }
+
+  .app-sidebar-shell {
+    background: var(--nav-bg);
+    color: white;
+  }
+
+  .app-sidebar-top {
+    background: color-mix(in srgb, var(--nav-bg) 88%, white 12%);
+  }
+
+  .app-sidebar-card {
+    background: var(--nav-card-bg);
+  }
+
+  .app-sidebar-link-active {
+    background: var(--nav-active-bg);
+    color: var(--nav-active-text);
+  }
+
+  .app-sidebar-link-inactive {
+    color: var(--nav-inactive-text);
+  }
+
+  .app-sidebar-link-inactive:hover {
+    background: rgba(255, 255, 255, 0.10);
+    color: white;
+  }
+
+  .app-muted {
+    color: var(--muted-text);
   }
 }

@@ -27,15 +27,15 @@ export const THEMES: ThemeDefinition[] = [
   },
   {
     id: "serra-notturna",
-    name: "Serra Notturna",
-    description: "Petrolio e verde scuro per un look premium, piu' profondo e memorabile.",
-    preview: ["#10241F", "#245C4F", "#8FCB9B"]
+    name: "Serra Elettrica",
+    description: "Blu profondo, teal e acqua per un'identita' piu' audace e luminosa.",
+    preview: ["#1B2747", "#0F9FB7", "#7AE7C7"]
   },
   {
     id: "frutteto-pop",
     name: "Frutteto Pop",
-    description: "Energia, frutta matura e accenti vivaci per un carattere piu' giocoso.",
-    preview: ["#2B1F1A", "#E56B5D", "#7FB069"]
+    description: "Prugna, corallo e lime per un carattere piu' giocoso e memorabile.",
+    preview: ["#4B2142", "#F25F5C", "#9BC53D"]
   }
 ];
 

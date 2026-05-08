@@ -101,13 +101,13 @@ export function AppShell() {
     >
       {/* Sidebar desktop */}
       <aside className="hidden lg:sticky lg:top-5 lg:block lg:h-fit lg:w-[260px] lg:shrink-0">
-        <div className="overflow-hidden rounded-[2rem] bg-ink text-white shadow-2xl">
-          <div className="border-b border-white/10 bg-white/5 px-6 py-6">
+        <div className="app-sidebar-shell overflow-hidden rounded-[2rem] shadow-2xl">
+          <div className="app-sidebar-top border-b border-white/10 px-6 py-6">
             <p className="text-xs uppercase tracking-widest text-white/50">MangiaSano</p>
             <h1 className="mt-2 text-xl font-bold leading-snug">
               Mangia bene,<br />ogni settimana
             </h1>
-            <div className="mt-5 rounded-[1.4rem] bg-white/10 p-4">
+            <div className="app-sidebar-card mt-5 rounded-[1.4rem] p-4">
               <p className="text-sm font-semibold text-white">{user.name ?? user.email}</p>
               <p className="mt-1 text-xs text-white/60">{user.email}</p>
               <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Famiglia attiva</p>
@@ -124,8 +124,8 @@ export function AppShell() {
                 className={() =>
                   `rounded-[1.4rem] px-4 py-3 text-sm font-medium transition ${
                     isSidebarLinkActive(location.pathname, link.to)
-                      ? "bg-white text-ink"
-                      : "text-white/75 hover:bg-white/10 hover:text-white"
+                      ? "app-sidebar-link-active"
+                      : "app-sidebar-link-inactive"
                   }`
                 }
               >
