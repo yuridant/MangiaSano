@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { Family, FamilyDetail } from "../types";
 
-export function FamilyPage() {
+function FamilyContent({ embedded = false }: { embedded?: boolean }) {
   const { token, activeFamilyId, user, refreshSession } = useAuth();
   const queryClient = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState("");
@@ -95,9 +95,11 @@ export function FamilyPage() {
   if (!activeFamilyId) {
     return (
       <div className="flex flex-col gap-5">
-        <div className="app-page-header">
-          <h1 className="text-2xl font-bold text-ink">Famiglia</h1>
-        </div>
+        {!embedded && (
+          <div className="app-page-header">
+            <h1 className="text-2xl font-bold text-ink">Famiglia</h1>
+          </div>
+        )}
         <div className="app-panel">
           <h2 className="mb-2 font-bold text-ink">Crea la tua famiglia</h2>
           <p className="mb-4 text-sm text-slate-500">
@@ -136,9 +138,11 @@ export function FamilyPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="app-page-header">
-        <h1 className="text-2xl font-bold text-ink">Famiglia</h1>
-      </div>
+      {!embedded && (
+        <div className="app-page-header">
+          <h1 className="text-2xl font-bold text-ink">Famiglia</h1>
+        </div>
+      )}
 
       {/* Family name */}
       <div className="app-panel">
@@ -347,4 +351,12 @@ export function FamilyPage() {
       )}
     </div>
   );
+}
+
+export function FamilySettingsSection() {
+  return <FamilyContent embedded />;
+}
+
+export function FamilyPage() {
+  return <FamilyContent />;
 }

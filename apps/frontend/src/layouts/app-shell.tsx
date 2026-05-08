@@ -13,8 +13,7 @@ const SECONDARY_LINKS = [
   { to: "/menu", label: "Menu settimanale" },
   { to: "/ingredients", label: "Ingredienti" },
   { to: "/analytics", label: "Analytics" },
-  { to: "/family", label: "Famiglia" },
-  { to: "/account", label: "Account" }
+  { to: "/settings", label: "Impostazioni" }
 ] as const;
 
 const SIDEBAR_LINKS = [
@@ -25,8 +24,7 @@ const SIDEBAR_LINKS = [
   { to: "/ingredients", label: "Ingredienti" },
   { to: "/shopping", label: "Lista spesa" },
   { to: "/analytics", label: "Analytics" },
-  { to: "/family", label: "Famiglia" },
-  { to: "/account", label: "Account" }
+  { to: "/settings", label: "Impostazioni" }
 ] as const;
 
 function matchesPath(pathname: string, to: string) {

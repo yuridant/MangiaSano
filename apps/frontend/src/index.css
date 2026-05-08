@@ -4,18 +4,72 @@
 @tailwind utilities;
 
 :root {
-  color: #0f172a;
+  --color-ink: 31 42 36;
+  --color-sage: 94 139 99;
+  --color-cream: 251 247 236;
+  --color-terra: 232 154 107;
+  --color-herb: 71 108 76;
+  --color-wheat: 217 163 95;
+  --bg-left-glow: rgba(94, 139, 99, 0.14);
+  --bg-right-glow: rgba(217, 163, 95, 0.12);
+  --bg-from: #fbf7ec;
+  --bg-to: #eef7ee;
+  --focus-ring: rgba(94, 139, 99, 0.8);
+  --panel-shadow: 0 18px 60px rgba(31, 42, 36, 0.10);
   background:
-    radial-gradient(circle at top left, rgba(74, 124, 89, 0.12), transparent 30%),
-    radial-gradient(circle at top right, rgba(217, 119, 6, 0.10), transparent 26%),
-    linear-gradient(180deg, #fefce8 0%, #f0fdf4 100%);
+    radial-gradient(circle at top left, var(--bg-left-glow), transparent 30%),
+    radial-gradient(circle at top right, var(--bg-right-glow), transparent 26%),
+    linear-gradient(180deg, var(--bg-from) 0%, var(--bg-to) 100%);
+  color: rgb(var(--color-ink));
   color-scheme: light;
+}
+
+[data-theme="mediterranea"] {
+  --color-ink: 36 49 58;
+  --color-sage: 98 122 58;
+  --color-cream: 252 244 232;
+  --color-terra: 200 108 76;
+  --color-herb: 77 97 45;
+  --color-wheat: 224 184 93;
+  --bg-left-glow: rgba(98, 122, 58, 0.13);
+  --bg-right-glow: rgba(200, 108, 76, 0.11);
+  --bg-from: #fcf4e8;
+  --bg-to: #eef4ea;
+  --focus-ring: rgba(98, 122, 58, 0.8);
+  --panel-shadow: 0 18px 60px rgba(36, 49, 58, 0.10);
+}
+
+[data-theme="serra-moderna"] {
+  --color-ink: 29 40 48;
+  --color-sage: 78 138 120;
+  --color-cream: 247 245 238;
+  --color-terra: 212 141 99;
+  --color-herb: 61 110 96;
+  --color-wheat: 217 200 163;
+  --bg-left-glow: rgba(78, 138, 120, 0.14);
+  --bg-right-glow: rgba(212, 141, 99, 0.10);
+  --bg-from: #f7f5ee;
+  --bg-to: #eaf3ef;
+  --focus-ring: rgba(78, 138, 120, 0.8);
+  --panel-shadow: 0 18px 60px rgba(29, 40, 48, 0.10);
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, var(--bg-left-glow), transparent 30%),
+    radial-gradient(circle at top right, var(--bg-right-glow), transparent 26%),
+    linear-gradient(180deg, var(--bg-from) 0%, var(--bg-to) 100%);
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  color: rgb(var(--color-ink));
+  background:
+    radial-gradient(circle at top left, var(--bg-left-glow), transparent 30%),
+    radial-gradient(circle at top right, var(--bg-right-glow), transparent 26%),
+    linear-gradient(180deg, var(--bg-from) 0%, var(--bg-to) 100%);
 }
 
 #root {
@@ -35,7 +89,7 @@ input, select, textarea, button, a {
 }
 
 :focus-visible {
-  outline: 2px solid rgba(74, 124, 89, 0.8);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -69,11 +123,11 @@ input, select, textarea, button, a {
   }
 
   .app-btn-primary {
-    @apply bg-ink text-white hover:bg-slate-800;
+    @apply bg-ink text-white hover:bg-ink/90;
   }
 
   .app-btn-sage {
-    @apply bg-sage text-white hover:bg-green-800;
+    @apply bg-sage text-white hover:bg-herb;
   }
 
   .app-btn-secondary {
@@ -89,11 +143,11 @@ input, select, textarea, button, a {
   }
 
   .app-badge-sage {
-    @apply bg-green-100 text-green-800;
+    @apply bg-sage/15 text-sage;
   }
 
   .app-badge-wheat {
-    @apply bg-amber-100 text-amber-800;
+    @apply bg-wheat/15 text-wheat;
   }
 
   .app-modal-root {

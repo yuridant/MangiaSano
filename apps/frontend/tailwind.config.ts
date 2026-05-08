@@ -5,18 +5,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#0f172a",
-        sage: "#4a7c59",
-        cream: "#fefce8",
-        terra: "#c2410c",
-        herb: "#16a34a",
-        wheat: "#d97706"
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        sage: "rgb(var(--color-sage) / <alpha-value>)",
+        cream: "rgb(var(--color-cream) / <alpha-value>)",
+        terra: "rgb(var(--color-terra) / <alpha-value>)",
+        herb: "rgb(var(--color-herb) / <alpha-value>)",
+        wheat: "rgb(var(--color-wheat) / <alpha-value>)"
       },
       fontFamily: {
         sans: ["'Manrope'", "sans-serif"]
       },
       boxShadow: {
-        panel: "0 18px 60px rgba(15, 23, 42, 0.10)"
+        panel: "var(--panel-shadow)"
       }
     }
   },

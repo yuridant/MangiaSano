@@ -10,8 +10,7 @@ import { IngredientsPage } from "../pages/ingredients-page";
 import { RecipesPage } from "../pages/recipes-page";
 import { ShoppingPage } from "../pages/shopping-page";
 import { AnalyticsPage } from "../pages/analytics-page";
-import { FamilyPage } from "../pages/family-page";
-import { AccountPage } from "../pages/account-page";
+import { SettingsPage } from "../pages/settings-page";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -28,8 +27,9 @@ export const router = createBrowserRouter([
       { path: "recipes", element: <RecipesPage /> },
       { path: "shopping", element: <ShoppingPage /> },
       { path: "analytics", element: <AnalyticsPage /> },
-      { path: "family", element: <FamilyPage /> },
-      { path: "account", element: <AccountPage /> }
+      { path: "settings", element: <SettingsPage /> },
+      { path: "family", element: <Navigate to="/settings?tab=family" replace /> },
+      { path: "account", element: <Navigate to="/settings?tab=account" replace /> }
     ]
   },
   { path: "*", element: <Navigate to="/" replace /> }

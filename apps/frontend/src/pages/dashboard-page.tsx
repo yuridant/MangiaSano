@@ -55,7 +55,7 @@ export function DashboardPage() {
         <div className="app-panel text-center">
           <p className="text-slate-500">
             Non sei ancora membro di una famiglia.{" "}
-            <Link to="/family" className="font-semibold text-sage hover:underline">
+            <Link to="/settings?tab=family" className="font-semibold text-sage hover:underline">
               Crea o unisciti a una famiglia
             </Link>
           </p>

@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
-export function AccountPage() {
+function AccountContent({ embedded = false }: { embedded?: boolean }) {
   const { token, user, families, logout, setActiveFamilyId, activeFamilyId, refreshSession } = useAuth();
   const navigate = useNavigate();
 
@@ -52,9 +52,11 @@ export function AccountPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="app-page-header">
-        <h1 className="text-2xl font-bold text-ink">Account</h1>
-      </div>
+      {!embedded && (
+        <div className="app-page-header">
+          <h1 className="text-2xl font-bold text-ink">Account</h1>
+        </div>
+      )}
 
       {/* Profile */}
       <div className="app-panel">
@@ -224,4 +226,12 @@ export function AccountPage() {
       </div>
     </div>
   );
+}
+
+export function AccountSettingsSection() {
+  return <AccountContent embedded />;
+}
+
+export function AccountPage() {
+  return <AccountContent />;
 }
