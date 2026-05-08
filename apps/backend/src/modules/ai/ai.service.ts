@@ -55,8 +55,16 @@ export interface AiGenerateResult {
   correctionSummary: {
     correctionAttempts: number;
     corrected: boolean;
+    reachedLimit: boolean;
     notes: string[];
   };
+  validationIssues: {
+    dayOfWeek?: number;
+    mealSlot?: MealSlot;
+    recipeName?: string;
+    message: string;
+    code: string;
+  }[];
   result: AiResponse;
 }
 
@@ -303,8 +311,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         correctionSummary: {
           correctionAttempts: validation.correctionAttempts,
           corrected: validation.correctionAttempts > 0,
+          reachedLimit: validation.reachedLimit,
           notes: validation.notes
         },
+        validationIssues: validation.issues,
         result: validation.result
       };
     } catch (error) {
@@ -389,7 +399,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       },
       existingRecipes,
       normalizedSelectedSlots,
-      { requireCompleteCoverage: false }
+      { requireCompleteCoverage: false, allowIncompatibleSlots: true }
     );
     if (!validation.ok) {
       throw new BadRequestException(validation.issues[0]?.message ?? "La risposta AI non è valida.");
@@ -830,7 +840,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     response: AiResponse,
     existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[],
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
-    options: { requireCompleteCoverage: boolean }
+    options: { requireCompleteCoverage: boolean; allowIncompatibleSlots?: boolean }
   ) {
     const validation = this.inspectAiResponse(response, existingRecipes, requestedSlots, options);
     if (!validation.ok) {
@@ -843,7 +853,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     response: AiResponse,
     existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[],
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
-    options: { requireCompleteCoverage: boolean }
+    options: { requireCompleteCoverage: boolean; allowIncompatibleSlots?: boolean }
   ): { ok: true; result: AiResponse } | { ok: false; issues: AiValidationIssue[] } {
     const requestedSlotKeys = new Set(requestedSlots.map((slot) => this.getSlotKey(slot.dayOfWeek, slot.mealSlot)));
     const returnedSlotKeys = new Set<string>();
@@ -888,13 +898,15 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         if (existingRecipeIdsSet.has(meal.recipeId)) {
           const exactRecipe = existingRecipes.find((recipe) => recipe.id === meal.recipeId);
           if (exactRecipe && exactRecipe.mealTypes.length > 0 && !exactRecipe.mealTypes.includes(meal.mealSlot)) {
-            issues.push({
-              code: "existing_recipe_incompatible_slot",
-              message: `La ricetta "${exactRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-              dayOfWeek: meal.dayOfWeek,
-              mealSlot: meal.mealSlot,
-              recipeName: exactRecipe.name
-            });
+            if (!options.allowIncompatibleSlots) {
+              issues.push({
+                code: "existing_recipe_incompatible_slot",
+                message: `La ricetta "${exactRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+                dayOfWeek: meal.dayOfWeek,
+                mealSlot: meal.mealSlot,
+                recipeName: exactRecipe.name
+              });
+            }
           }
           continue;
         }
@@ -904,14 +916,16 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
             matchedExistingRecipe.mealTypes.length > 0 &&
             !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
           ) {
-            issues.push({
-              code: "existing_recipe_incompatible_slot",
-              message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-              dayOfWeek: meal.dayOfWeek,
-              mealSlot: meal.mealSlot,
-              recipeName: matchedExistingRecipe.name
-            });
-            continue;
+            if (!options.allowIncompatibleSlots) {
+              issues.push({
+                code: "existing_recipe_incompatible_slot",
+                message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+                dayOfWeek: meal.dayOfWeek,
+                mealSlot: meal.mealSlot,
+                recipeName: matchedExistingRecipe.name
+              });
+              continue;
+            }
           }
           meal.recipeId = matchedExistingRecipe.id;
           meal.recipeName = matchedExistingRecipe.name;
@@ -938,14 +952,16 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           matchedExistingRecipe.mealTypes.length > 0 &&
           !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
         ) {
-          issues.push({
-            code: "existing_recipe_incompatible_slot",
-            message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-            dayOfWeek: meal.dayOfWeek,
-            mealSlot: meal.mealSlot,
-            recipeName: matchedExistingRecipe.name
-          });
-          continue;
+          if (!options.allowIncompatibleSlots) {
+            issues.push({
+              code: "existing_recipe_incompatible_slot",
+              message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+              dayOfWeek: meal.dayOfWeek,
+              mealSlot: meal.mealSlot,
+              recipeName: matchedExistingRecipe.name
+            });
+            continue;
+          }
         }
         meal.recipeId = matchedExistingRecipe.id;
         meal.recipeName = matchedExistingRecipe.name;
@@ -970,13 +986,15 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         matchingNewRecipe?.mealTypes?.length &&
         !matchingNewRecipe.mealTypes.includes(meal.mealSlot)
       ) {
-        issues.push({
-          code: "new_recipe_incompatible_slot",
-          message: `La nuova ricetta "${matchingNewRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-          dayOfWeek: meal.dayOfWeek,
-          mealSlot: meal.mealSlot,
-          recipeName: matchingNewRecipe.name
-        });
+        if (!options.allowIncompatibleSlots) {
+          issues.push({
+            code: "new_recipe_incompatible_slot",
+            message: `La nuova ricetta "${matchingNewRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            recipeName: matchingNewRecipe.name
+          });
+        }
       }
     }
 
@@ -1035,6 +1053,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         return {
           result: validation.result,
           correctionAttempts,
+          reachedLimit: false,
+          issues: [],
           notes,
           correctionUsages,
           lastResponseId: previousResponseId
@@ -1042,9 +1062,18 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
 
       if (correctionAttempts === MAX_AI_CORRECTION_ATTEMPTS) {
-        throw new BadRequestException(
-          `L'AI non è riuscita a correggere automaticamente il piano dopo ${MAX_AI_CORRECTION_ATTEMPTS} tentativi. Ultimo problema: ${validation.issues[0]?.message ?? "vincoli non rispettati"}.`
+        notes.push(
+          `Limite di correzioni raggiunto: restano ${validation.issues.length} criticità da controllare manualmente.`
         );
+        return {
+          result: currentResponse,
+          correctionAttempts,
+          reachedLimit: true,
+          issues: validation.issues,
+          notes,
+          correctionUsages,
+          lastResponseId: previousResponseId
+        };
       }
 
       correctionAttempts += 1;

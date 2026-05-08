@@ -125,8 +125,16 @@ export interface AiGenerateResult {
   correctionSummary: {
     correctionAttempts: number;
     corrected: boolean;
+    reachedLimit: boolean;
     notes: string[];
   };
+  validationIssues: {
+    dayOfWeek?: number;
+    mealSlot?: MealSlot;
+    recipeName?: string;
+    message: string;
+    code: string;
+  }[];
   result: AiResponse;
 }
 

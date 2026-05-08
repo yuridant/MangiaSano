@@ -6,10 +6,11 @@ interface WeekGridProps {
   meals?: MenuMeal[];
   weekStart: string;
   selectedSlots?: Set<string>;
+  flaggedSlots?: Map<string, string[]>;
   onCellClick?: (dayOfWeek: number, mealSlot: MealSlot, meal: MenuMeal | null) => void;
 }
 
-export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }: WeekGridProps) {
+export function WeekGrid({ menu, meals, weekStart, selectedSlots, flaggedSlots, onCellClick }: WeekGridProps) {
   const sourceMeals = meals ?? menu?.meals ?? [];
   const mealsByDayAndSlot = new Map<string, MenuMeal>();
   for (const meal of sourceMeals) {
@@ -46,7 +47,12 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
               const slotKey = `${dayIndex}-${slot}`;
               const isFilled = Boolean(meal);
               const isSelected = selectedSlots?.has(slotKey) ?? false;
-              const cellClasses = isFilled
+              const isFlagged = (flaggedSlots?.get(slotKey)?.length ?? 0) > 0;
+              const cellClasses = isFlagged
+                ? isSelected
+                  ? "border-amber-500 bg-amber-100 text-amber-900 shadow-[0_12px_24px_rgba(245,158,11,0.20)]"
+                  : "border-amber-300 bg-amber-50 text-amber-900 shadow-[0_8px_18px_rgba(245,158,11,0.12)]"
+                : isFilled
                 ? isSelected
                   ? "border-sage bg-sage text-white shadow-[0_12px_24px_rgba(85,139,103,0.24)]"
                   : "border-sage/30 bg-sage/14 text-sage shadow-[0_8px_18px_rgba(85,139,103,0.12)]"
@@ -62,15 +68,17 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, onCellClick }:
                   className={`min-h-[72px] w-full rounded-2xl border px-2 py-2 text-center text-[10px] font-medium leading-tight transition ${
                     cellClasses
                   } ${onCellClick ? "hover:-translate-y-[1px]" : "cursor-default"}`}
+                  title={flaggedSlots?.get(slotKey)?.join(" ")}
                 >
                   {meal ? (
                     <div className="flex h-full flex-col items-center justify-center gap-1">
+                      {isFlagged && <span className="text-[10px] font-bold uppercase tracking-wide">Da verificare</span>}
                       <span className="line-clamp-3 text-[11px] font-semibold leading-tight">
                         {meal.recipe?.name ?? meal.customName ?? "—"}
                       </span>
                     </div>
                   ) : (
-                    <span className="text-base leading-none">{isSelected ? "✓" : "+"}</span>
+                    <span className="text-base leading-none">{isSelected ? "✓" : isFlagged ? "!" : "+"}</span>
                   )}
                 </button>
               );

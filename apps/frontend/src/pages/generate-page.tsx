@@ -50,6 +50,7 @@ export function GeneratePage() {
     correctionSummary: {
       correctionAttempts: number;
       corrected: boolean;
+      reachedLimit: boolean;
       notes: string[];
     };
   } | null>(null);
@@ -60,6 +61,8 @@ export function GeneratePage() {
   const [overwriteWarningOpen, setOverwriteWarningOpen] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<AiFeedbackRating | null>(null);
   const [submittedFeedback, setSubmittedFeedback] = useState<AiFeedbackRating | null>(null);
+  const [validationIssues, setValidationIssues] = useState<AiGenerateResult["validationIssues"]>([]);
+  const [progressMessageIndex, setProgressMessageIndex] = useState(0);
 
   const requestedWeekStart = searchParams.get("weekStart");
   const parsedWeekStart =
@@ -89,6 +92,8 @@ export function GeneratePage() {
     setOverwriteWarningOpen(false);
     setSelectedFeedback(null);
     setSubmittedFeedback(null);
+    setValidationIssues([]);
+    setProgressMessageIndex(0);
   }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
@@ -185,6 +190,7 @@ export function GeneratePage() {
         experimentStrategy: data.experimentStrategy,
         correctionSummary: data.correctionSummary
       });
+      setValidationIssues(data.validationIssues);
       setPlanToSave(sortMealPlans(data.result.weeklyPlan));
       setSelectedFeedback(null);
       setSubmittedFeedback(null);
@@ -194,6 +200,17 @@ export function GeneratePage() {
       setError(err instanceof Error ? err.message : "Errore durante la generazione");
     }
   });
+
+  useEffect(() => {
+    if (!generateMutation.isPending) {
+      setProgressMessageIndex(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setProgressMessageIndex((current) => (current + 1) % GENERATION_PROGRESS_MESSAGES.length);
+    }, 1800);
+    return () => window.clearInterval(interval);
+  }, [generateMutation.isPending]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -259,6 +276,14 @@ export function GeneratePage() {
         } as MenuMeal["recipe"])
       : null
   }));
+  const flaggedSlots = new Map<string, string[]>();
+  for (const issue of validationIssues) {
+    if (issue.dayOfWeek === undefined || issue.mealSlot === undefined) continue;
+    const key = getSlotKey(issue.dayOfWeek, issue.mealSlot);
+    const current = flaggedSlots.get(key) ?? [];
+    current.push(issue.message);
+    flaggedSlots.set(key, current);
+  }
 
   if (step === "preview" && aiResult) {
     return (
@@ -287,18 +312,43 @@ export function GeneratePage() {
               </div>
             )}
           </div>
-          <WeekGrid meals={previewMeals} weekStart={weekStart} />
+          <WeekGrid meals={previewMeals} weekStart={weekStart} flaggedSlots={flaggedSlots} />
         </div>
 
         {generationMeta?.correctionSummary.corrected && (
-          <div className="rounded-2xl bg-amber-50 px-4 py-4 text-sm text-amber-800">
+          <div
+            className={`rounded-2xl px-4 py-4 text-sm ${
+              generationMeta.correctionSummary.reachedLimit
+                ? "bg-amber-50 text-amber-800"
+                : "bg-sky-50 text-sky-800"
+            }`}
+          >
             <p className="font-semibold">
-              L&apos;AI ha corretto automaticamente la proposta {generationMeta.correctionSummary.correctionAttempts}{" "}
-              {generationMeta.correctionSummary.correctionAttempts === 1 ? "volta" : "volte"} prima di mostrartela.
+              {generationMeta.correctionSummary.reachedLimit
+                ? "L'AI ha raggiunto il limite massimo di correzioni automatiche."
+                : "L'AI ha corretto automaticamente la proposta prima di mostrartela."}{" "}
+              {generationMeta.correctionSummary.correctionAttempts > 0 &&
+                `Tentativi effettuati: ${generationMeta.correctionSummary.correctionAttempts}.`}
             </p>
             <div className="mt-2 flex flex-col gap-1">
               {generationMeta.correctionSummary.notes.map((note) => (
                 <p key={note}>{note}</p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {validationIssues.length > 0 && (
+          <div className="rounded-2xl bg-amber-50 px-4 py-4 text-sm text-amber-900">
+            <p className="font-semibold">
+              Restano alcuni pasti da verificare: li trovi evidenziati nella griglia.
+            </p>
+            <p className="mt-1 text-amber-800">
+              Puoi salvare comunque il piano e poi correggere manualmente i pasti segnati.
+            </p>
+            <div className="mt-3 flex flex-col gap-2">
+              {validationIssues.map((issue, index) => (
+                <p key={`${issue.code}-${issue.dayOfWeek}-${issue.mealSlot}-${index}`}>{issue.message}</p>
               ))}
             </div>
           </div>
@@ -375,6 +425,7 @@ export function GeneratePage() {
               setStep("select");
               setAiResult(null);
               setGenerationMeta(null);
+              setValidationIssues([]);
               setSelectedFeedback(null);
               setSubmittedFeedback(null);
             }}
@@ -548,6 +599,15 @@ export function GeneratePage() {
         <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
       )}
 
+      {generateMutation.isPending && (
+        <div className="rounded-2xl bg-sky-50 px-4 py-4 text-sm text-sky-900">
+          <p className="font-semibold">{GENERATION_PROGRESS_MESSAGES[progressMessageIndex]}</p>
+          <p className="mt-1 text-sky-800">
+            Se emergono pasti incompatibili, proveremo a farli correggere automaticamente all&apos;AI nella stessa conversazione.
+          </p>
+        </div>
+      )}
+
       {!goal.trim() && (
         <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
           Inserisci un obiettivo per aiutare l&apos;AI a proporre un menu coerente.
@@ -620,3 +680,9 @@ export function GeneratePage() {
     </div>
   );
 }
+
+const GENERATION_PROGRESS_MESSAGES = [
+  "L'AI sta preparando la prima proposta del piano.",
+  "Sto controllando che ogni ricetta sia coerente con il tipo di pasto.",
+  "Se serve, sto chiedendo all'AI di correggere solo gli slot problematici."
+];
