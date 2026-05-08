@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Family, User } from "../types";
 
@@ -35,6 +35,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [families, setFamilies] = useState<Family[]>([]);
   const [activeFamilyId, setActiveFamilyIdState] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const tokenRef = useRef<string | null>(null);
+  const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -60,6 +66,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ token, refreshToken, activeFamilyId }));
   }, [activeFamilyId, token]);
 
+  const performRefresh = async () => {
+    const refreshToken = window.sessionStorage.getItem(STORAGE_KEY);
+    if (!refreshToken) return null;
+
+    if (!refreshPromiseRef.current) {
+      refreshPromiseRef.current = api
+        .post<{ accessToken: string; refreshToken: string }>("/auth/refresh", { refreshToken })
+        .then(async (refreshed) => {
+          await syncSession(refreshed.accessToken, refreshed.refreshToken, activeFamilyId);
+          return refreshed.accessToken;
+        })
+        .catch(() => {
+          logout();
+          return null;
+        })
+        .finally(() => {
+          refreshPromiseRef.current = null;
+        });
+    }
+
+    return refreshPromiseRef.current;
+  };
+
+  useEffect(() => {
+    api.configureAuth({
+      getAccessToken: () => tokenRef.current,
+      refreshAccessToken: performRefresh,
+      onAuthFailure: logout
+    });
+  });
+
   const syncSession = async (
     nextToken: string,
     nextRefreshToken: string,
@@ -75,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     setToken(nextToken);
+    tokenRef.current = nextToken;
     setUser(payload.user);
     setFamilies(payload.families);
     window.sessionStorage.setItem(STORAGE_KEY, nextRefreshToken);
@@ -91,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void api.post("/auth/logout", { refreshToken }).catch(() => undefined);
     }
     setToken(null);
+    tokenRef.current = null;
     setUser(null);
     setFamilies([]);
     setActiveFamilyIdState(null);
@@ -121,10 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await syncSession(response.accessToken, response.refreshToken);
         },
         refreshSession: async () => {
-          if (!token) return;
+          const currentToken = tokenRef.current;
+          if (!currentToken) return;
           const refreshToken = window.sessionStorage.getItem(STORAGE_KEY);
           if (!refreshToken) { logout(); return; }
-          await syncSession(token, refreshToken, activeFamilyId);
+          await syncSession(currentToken, refreshToken, activeFamilyId);
         },
         logout,
         setActiveFamilyId: setActiveFamilyIdState

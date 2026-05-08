@@ -1,7 +1,21 @@
 const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
 
+let authRuntime: {
+  getAccessToken: () => string | null;
+  refreshAccessToken: () => Promise<string | null>;
+  onAuthFailure: () => void;
+} | null = null;
+
 function buildApiUrl(path: string) {
   return `${API_URL}/api${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function buildHeaders(token?: string, headers?: HeadersInit) {
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...headers
+  };
 }
 
 async function parseResponseBody(response: Response) {
@@ -17,15 +31,26 @@ async function parseResponseBody(response: Response) {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
-  const response = await fetch(buildApiUrl(path), {
+async function performRequest(path: string, options: RequestInit = {}, token?: string) {
+  return fetch(buildApiUrl(path), {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers
-    }
+    headers: buildHeaders(token, options.headers)
   });
+}
+
+async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
+  let effectiveToken = token;
+  let response = await performRequest(path, options, effectiveToken);
+
+  if (response.status === 401 && authRuntime && effectiveToken) {
+    const refreshedToken = await authRuntime.refreshAccessToken();
+    if (refreshedToken) {
+      effectiveToken = refreshedToken;
+      response = await performRequest(path, options, effectiveToken);
+    } else {
+      authRuntime.onAuthFailure();
+    }
+  }
 
   const payload = await parseResponseBody(response);
 
@@ -43,6 +68,9 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 }
 
 export const api = {
+  configureAuth: (runtime: typeof authRuntime) => {
+    authRuntime = runtime;
+  },
   buildUrl: buildApiUrl,
   get: <T>(path: string, token?: string) => request<T>(path, {}, token),
   post: <T>(path: string, body: unknown, token?: string) =>

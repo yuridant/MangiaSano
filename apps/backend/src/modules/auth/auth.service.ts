@@ -7,12 +7,12 @@ import {
 import { Prisma } from "@prisma/client";
 import { compare, hash } from "bcryptjs";
 import { randomBytes } from "node:crypto";
-import { sign } from "jsonwebtoken";
+import { sign, type SignOptions } from "jsonwebtoken";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
 
-const ACCESS_TOKEN_TTL = "15m";
-const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_ACCESS_TOKEN_TTL = "8h";
+const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 30;
 
 @Injectable()
 export class AuthService {
@@ -22,15 +22,22 @@ export class AuthService {
   ) {}
 
   private signToken(userId: string, email: string) {
+    const expiresIn = (this.config.get<string>("ACCESS_TOKEN_TTL") ?? DEFAULT_ACCESS_TOKEN_TTL) as SignOptions["expiresIn"];
     return sign({ sub: userId, email }, this.config.getOrThrow<string>("JWT_SECRET"), {
-      expiresIn: ACCESS_TOKEN_TTL
+      expiresIn
     });
   }
 
   private async createRefreshToken(userId: string) {
     const token = randomBytes(40).toString("hex");
+    const refreshTokenTtlDays =
+      this.config.get<number>("REFRESH_TOKEN_TTL_DAYS") ?? DEFAULT_REFRESH_TOKEN_TTL_DAYS;
     await this.prisma.refreshToken.create({
-      data: { token, userId, expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS) }
+      data: {
+        token,
+        userId,
+        expiresAt: new Date(Date.now() + refreshTokenTtlDays * 24 * 60 * 60 * 1000)
+      }
     });
     return token;
   }

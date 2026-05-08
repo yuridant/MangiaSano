@@ -3,6 +3,8 @@ import { z } from "zod";
 export const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(8),
+  ACCESS_TOKEN_TTL: z.string().min(2).optional(),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().optional(),
   PORT: z.coerce.number().default(3000),
   APP_URL: z.string().url(),
   CORS_ORIGIN: z.string().optional(),
