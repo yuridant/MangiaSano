@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { WeekNavigator } from "../components/menu/WeekNavigator";
 import { WeekGrid } from "../components/menu/WeekGrid";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { formatDateKey, formatWeekRange, getMonday } from "../lib/week";
 import type {
   AiFeedbackRating,
   AiGenerateResult,
@@ -15,28 +17,6 @@ import type {
   WeeklyMenu
 } from "../types";
 import { DAYS, DAYS_FULL, MEAL_SLOT_ORDER, SLOT_LABELS, SLOTS } from "../types";
-
-function getMonday(date: Date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function formatDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatWeekRange(weekStart: string) {
-  const start = new Date(`${weekStart}T00:00:00`);
-  const end = new Date(start.getTime() + 6 * 86400000);
-  return `${start.toLocaleDateString("it-IT", { day: "numeric", month: "short" })} — ${end.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" })}`;
-}
 
 interface SelectedSlot {
   dayOfWeek: number;
@@ -160,24 +140,6 @@ export function GeneratePage() {
   const isMealTypeFullySelected = (mealSlot: MealSlot) =>
     DAYS_FULL.every((_, dayOfWeek) => isSelected(dayOfWeek, mealSlot));
 
-  const setWeek = (date: Date) => {
-    const nextWeekStart = formatDateKey(getMonday(date));
-    setSearchParams({ weekStart: nextWeekStart });
-  };
-
-  const prevWeek = () => {
-    const next = new Date(currentWeek);
-    next.setDate(next.getDate() - 7);
-    setWeek(next);
-  };
-
-  const nextWeek = () => {
-    const next = new Date(currentWeek);
-    next.setDate(next.getDate() + 7);
-    setWeek(next);
-  };
-
-  const isCurrentWeek = formatDateKey(getMonday(new Date())) === weekStart;
   const assignedMeals = menuQuery.data?.meals ?? [];
   const selectedSlotSet = new Set(selectedSlots.map((slot) => getSlotKey(slot.dayOfWeek, slot.mealSlot)));
   const overlappingMeals = assignedMeals.filter((meal) =>
@@ -430,28 +392,7 @@ export function GeneratePage() {
             year: "numeric"
           })}.
         </p>
-        <div className="mt-4 flex items-center gap-3">
-          <button
-            onClick={prevWeek}
-            className="app-btn-xs app-btn-secondary"
-            type="button"
-          >
-            ← Prec.
-          </button>
-          <div className="flex-1 text-center">
-            <p className="text-sm font-semibold text-ink">{formatWeekRange(weekStart)}</p>
-            {isCurrentWeek && (
-              <span className="text-xs font-medium text-sage">Settimana corrente</span>
-            )}
-          </div>
-          <button
-            onClick={nextWeek}
-            className="app-btn-xs app-btn-secondary"
-            type="button"
-          >
-            Succ. →
-          </button>
-        </div>
+        <WeekNavigator weekStart={weekStart} onChangeWeekStart={(nextWeekStart) => setSearchParams({ weekStart: nextWeekStart })} />
       </div>
 
       <div className="app-panel">

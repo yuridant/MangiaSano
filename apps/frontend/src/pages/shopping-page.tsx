@@ -1,32 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { WeekNavigator } from "../components/menu/WeekNavigator";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { formatDateKey, getMonday } from "../lib/week";
 import type { ShoppingItem, ShoppingList } from "../types";
-
-function getMonday(date: Date) {
-  const d = new Date(date);
-  const day = d.getUTCDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
-}
-
-function formatWeekLabel(weekStart: string) {
-  const start = new Date(weekStart + "T00:00:00");
-  const end = new Date(start.getTime() + 6 * 86400000);
-  return `${start.toLocaleDateString("it-IT", { day: "numeric", month: "short" })} — ${end.toLocaleDateString("it-IT", { day: "numeric", month: "short" })}`;
-}
 
 export function ShoppingPage() {
   const { token, activeFamilyId } = useAuth();
   const queryClient = useQueryClient();
-
-  const [weekOffset, setWeekOffset] = useState(0);
-  const currentMonday = getMonday(new Date());
-  const targetDate = new Date(currentMonday.getTime() + weekOffset * 7 * 86400000);
-  const weekStart = targetDate.toISOString().split("T")[0];
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedWeekStart = searchParams.get("weekStart");
+  const parsedWeek =
+    requestedWeekStart && !Number.isNaN(new Date(requestedWeekStart).getTime())
+      ? new Date(`${requestedWeekStart}T00:00:00`)
+      : getMonday(new Date());
+  const weekStart = formatDateKey(getMonday(parsedWeek));
 
   const listQuery = useQuery({
     queryKey: ["shopping", activeFamilyId, weekStart],
@@ -92,30 +81,11 @@ export function ShoppingPage() {
     <div className="flex flex-col gap-5">
       <div className="app-page-header">
         <h1 className="text-2xl font-bold text-ink">Lista della spesa</h1>
-
-        {/* Week navigator */}
-        <div className="mt-4 flex items-center gap-3">
-          <button
-            onClick={() => setWeekOffset((o) => o - 1)}
-            className="app-btn-xs app-btn-secondary"
-            type="button"
-          >
-            ← Prec.
-          </button>
-          <div className="flex-1 text-center">
-            <p className="text-sm font-semibold text-ink">{formatWeekLabel(weekStart)}</p>
-            {weekOffset === 0 && (
-              <span className="text-xs text-sage font-medium">Settimana corrente</span>
-            )}
-          </div>
-          <button
-            onClick={() => setWeekOffset((o) => o + 1)}
-            className="app-btn-xs app-btn-secondary"
-            type="button"
-          >
-            Succ. →
-          </button>
-        </div>
+        <WeekNavigator
+          weekStart={weekStart}
+          includeYear={false}
+          onChangeWeekStart={(nextWeekStart) => setSearchParams({ weekStart: nextWeekStart })}
+        />
       </div>
 
       {listQuery.isLoading && (

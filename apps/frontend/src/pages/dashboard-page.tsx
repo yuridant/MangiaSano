@@ -1,23 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { WeekNavigator } from "../components/menu/WeekNavigator";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { WeekGrid } from "../components/menu/WeekGrid";
+import { formatDateKey, formatWeekRange, getMonday } from "../lib/week";
 import type { WeeklyMenu } from "../types";
-
-function getMonday(date: Date) {
-  const d = new Date(date);
-  const day = d.getUTCDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
-}
 
 export function DashboardPage() {
   const { token, activeFamilyId, families } = useAuth();
-  const today = new Date();
-  const weekStart = getMonday(today).toISOString().split("T")[0];
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedWeekStart = searchParams.get("weekStart");
+  const parsedWeek =
+    requestedWeekStart && !Number.isNaN(new Date(requestedWeekStart).getTime())
+      ? new Date(`${requestedWeekStart}T00:00:00`)
+      : getMonday(new Date());
+  const weekStart = formatDateKey(getMonday(parsedWeek));
 
   const menuQuery = useQuery({
     queryKey: ["menu", activeFamilyId, weekStart],
@@ -38,19 +36,9 @@ export function DashboardPage() {
               {activeFamily?.name ?? "MangiaSano"}
             </p>
             <h1 className="mt-1 text-2xl font-bold text-ink">
-              Settimana corrente
+              Vista settimanale
             </h1>
-            <p className="mt-0.5 text-sm text-slate-500">
-              {new Date(weekStart + "T00:00:00").toLocaleDateString("it-IT", {
-                day: "numeric",
-                month: "long"
-              })}{" "}
-              — {new Date(new Date(weekStart + "T00:00:00").getTime() + 6 * 86400000).toLocaleDateString("it-IT", {
-                day: "numeric",
-                month: "long",
-                year: "numeric"
-              })}
-            </p>
+            <p className="mt-0.5 text-sm text-slate-500">{formatWeekRange(weekStart)}</p>
           </div>
           <Link
             to={`/menu/generate?weekStart=${weekStart}`}
@@ -59,6 +47,7 @@ export function DashboardPage() {
             + AI
           </Link>
         </div>
+        <WeekNavigator weekStart={weekStart} onChangeWeekStart={(nextWeekStart) => setSearchParams({ weekStart: nextWeekStart })} />
       </div>
 
       {/* No family */}
