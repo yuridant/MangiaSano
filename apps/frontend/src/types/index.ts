@@ -157,12 +157,24 @@ export interface AnalyticsSummary {
     averageOutputTokens: number;
     averageRequestedMeals: number;
     averageCostPerMealUsd: number;
+    correctedRequests: number;
+    correctedRequestRatePct: number;
+    averageCorrectionAttempts: number;
+    averageCorrectionAttemptsWhenCorrected: number;
+    totalCorrectionCostUsd: number;
+    averageCorrectionCostUsd: number;
+    averageCorrectionCostWhenCorrectedUsd: number;
+    averageCorrectionInputTokens: number;
+    averageCorrectionOutputTokens: number;
     modelBreakdown: {
       model: string;
       requests: number;
       averageCostUsd: number;
       averageInputTokens: number;
       averageOutputTokens: number;
+      correctedRatePct: number;
+      averageCorrectionAttempts: number;
+      averageCorrectionCostUsd: number;
     }[];
     experimentBreakdown: {
       variant: string;
@@ -171,6 +183,9 @@ export interface AnalyticsSummary {
       averageRequestedMeals: number;
       averageInputTokens: number;
       averageOutputTokens: number;
+      correctedRatePct: number;
+      averageCorrectionAttempts: number;
+      averageCorrectionCostUsd: number;
       feedbackCount: number;
       positiveFeedbackRatePct: number | null;
       poorFeedbackRatePct: number | null;
@@ -208,6 +223,8 @@ export interface AnalyticsSummary {
       totalTokens: number;
       estimatedTotalCostUsd: number;
       latencyMs: number;
+      correctionAttempts: number;
+      correctionEstimatedCostUsd: number;
       feedbackRating: AiFeedbackRating | null;
       savedToMenu: boolean;
       requestBreakdown: unknown;

@@ -284,7 +284,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           weeklyPlanCount: validation.result.weeklyPlan.length,
           newRecipesCount: validation.result.newRecipes.length,
           newIngredientsCount: validation.result.newIngredients.length,
-          correctionAttempts: validation.correctionAttempts
+          correctionAttempts: validation.correctionAttempts,
+          correctionUsage: this.buildUsageSummary(model, this.combineUsageTotals(...validation.correctionUsages))
         },
         usageTotals: this.combineUsageTotals(
           this.extractUsageTotals(initialResponse.usage),
@@ -720,7 +721,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     existingRecipeCount: number;
     existingIngredientCount: number;
     requestBreakdown: RequestBreakdown;
-    responseBreakdown?: Record<string, number>;
+    responseBreakdown?: Record<string, unknown>;
     usageTotals?: UsageTotals;
     success: boolean;
     latencyMs: number;
@@ -786,6 +787,27 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       );
       return null;
     }
+  }
+
+  private buildUsageSummary(model: string, usageTotals: UsageTotals) {
+    const pricing = this.getPricingForModel(model);
+    const inputTokens = usageTotals.inputTokens ?? 0;
+    const cachedInputTokens = usageTotals.cachedInputTokens ?? 0;
+    const outputTokens = usageTotals.outputTokens ?? 0;
+    const billableInputTokens = Math.max(inputTokens - cachedInputTokens, 0);
+    const estimatedInputCostUsd = Number(
+      (((billableInputTokens / 1_000_000) * pricing.input) + ((cachedInputTokens / 1_000_000) * pricing.cachedInput)).toFixed(6)
+    );
+    const estimatedOutputCostUsd = Number((((outputTokens / 1_000_000) * pricing.output)).toFixed(6));
+    return {
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      totalTokens: usageTotals.totalTokens ?? 0,
+      estimatedInputCostUsd,
+      estimatedOutputCostUsd,
+      estimatedTotalCostUsd: Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6))
+    };
   }
 
   private getPricingForModel(model: string) {

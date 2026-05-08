@@ -157,6 +157,32 @@ export class AnalyticsService {
     const totalRequestedMeals = successfulLogs.reduce((sum, log) => sum + log.requestedMealCount, 0);
     const totalInputTokens = successfulLogs.reduce((sum, log) => sum + (log.inputTokens ?? 0), 0);
     const totalOutputTokens = successfulLogs.reduce((sum, log) => sum + (log.outputTokens ?? 0), 0);
+    const correctedLogs = successfulLogs.filter((log) => {
+      const responseBreakdown = log.responseBreakdown as { correctionAttempts?: number } | null;
+      return (responseBreakdown?.correctionAttempts ?? 0) > 0;
+    });
+    const totalCorrectionAttempts = successfulLogs.reduce((sum, log) => {
+      const responseBreakdown = log.responseBreakdown as { correctionAttempts?: number } | null;
+      return sum + (responseBreakdown?.correctionAttempts ?? 0);
+    }, 0);
+    const totalCorrectionCostUsd = successfulLogs.reduce((sum, log) => {
+      const responseBreakdown = log.responseBreakdown as
+        | { correctionUsage?: { estimatedTotalCostUsd?: number } }
+        | null;
+      return sum + (responseBreakdown?.correctionUsage?.estimatedTotalCostUsd ?? 0);
+    }, 0);
+    const totalCorrectionInputTokens = successfulLogs.reduce((sum, log) => {
+      const responseBreakdown = log.responseBreakdown as
+        | { correctionUsage?: { inputTokens?: number } }
+        | null;
+      return sum + (responseBreakdown?.correctionUsage?.inputTokens ?? 0);
+    }, 0);
+    const totalCorrectionOutputTokens = successfulLogs.reduce((sum, log) => {
+      const responseBreakdown = log.responseBreakdown as
+        | { correctionUsage?: { outputTokens?: number } }
+        | null;
+      return sum + (responseBreakdown?.correctionUsage?.outputTokens ?? 0);
+    }, 0);
 
     const modelBuckets = new Map<string, typeof successfulLogs>();
     const variantBuckets = new Map<string, typeof successfulLogs>();
@@ -201,6 +227,21 @@ export class AnalyticsService {
       const poorFeedbackCount = feedbackEntries.filter((entry) => entry.feedbackRating === "poor").length;
       const savedCount = entries.filter((entry) => Boolean(entry.savedToMenuAt)).length;
 
+      const correctedEntries = entries.filter((entry) => {
+        const responseBreakdown = entry.responseBreakdown as { correctionAttempts?: number } | null;
+        return (responseBreakdown?.correctionAttempts ?? 0) > 0;
+      });
+      const totalVariantCorrectionAttempts = entries.reduce((sum, entry) => {
+        const responseBreakdown = entry.responseBreakdown as { correctionAttempts?: number } | null;
+        return sum + (responseBreakdown?.correctionAttempts ?? 0);
+      }, 0);
+      const totalVariantCorrectionCost = entries.reduce((sum, entry) => {
+        const responseBreakdown = entry.responseBreakdown as
+          | { correctionUsage?: { estimatedTotalCostUsd?: number } }
+          | null;
+        return sum + (responseBreakdown?.correctionUsage?.estimatedTotalCostUsd ?? 0);
+      }, 0);
+
       return ({
       variant,
       requests: entries.length,
@@ -218,6 +259,9 @@ export class AnalyticsService {
       averageOutputTokens: Math.round(
         entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
       ),
+      correctedRatePct: Math.round((correctedEntries.length / entries.length) * 100),
+      averageCorrectionAttempts: Number((totalVariantCorrectionAttempts / entries.length).toFixed(2)),
+      averageCorrectionCostUsd: Number((totalVariantCorrectionCost / entries.length).toFixed(6)),
       feedbackCount: feedbackEntries.length,
       positiveFeedbackRatePct:
         feedbackEntries.length > 0 ? Math.round((positiveFeedbackCount / feedbackEntries.length) * 100) : null,
@@ -241,7 +285,38 @@ export class AnalyticsService {
         successfulLogs.length > 0 ? Number((totalRequestedMeals / successfulLogs.length).toFixed(1)) : 0,
       averageCostPerMealUsd:
         totalRequestedMeals > 0 ? Number((totalEstimatedCostUsd / totalRequestedMeals).toFixed(6)) : 0,
-      modelBreakdown: [...modelBuckets.entries()].map(([model, entries]) => ({
+      correctedRequests: correctedLogs.length,
+      correctedRequestRatePct:
+        successfulLogs.length > 0 ? Math.round((correctedLogs.length / successfulLogs.length) * 100) : 0,
+      averageCorrectionAttempts:
+        successfulLogs.length > 0 ? Number((totalCorrectionAttempts / successfulLogs.length).toFixed(2)) : 0,
+      averageCorrectionAttemptsWhenCorrected:
+        correctedLogs.length > 0 ? Number((totalCorrectionAttempts / correctedLogs.length).toFixed(2)) : 0,
+      totalCorrectionCostUsd: Number(totalCorrectionCostUsd.toFixed(6)),
+      averageCorrectionCostUsd:
+        successfulLogs.length > 0 ? Number((totalCorrectionCostUsd / successfulLogs.length).toFixed(6)) : 0,
+      averageCorrectionCostWhenCorrectedUsd:
+        correctedLogs.length > 0 ? Number((totalCorrectionCostUsd / correctedLogs.length).toFixed(6)) : 0,
+      averageCorrectionInputTokens:
+        successfulLogs.length > 0 ? Math.round(totalCorrectionInputTokens / successfulLogs.length) : 0,
+      averageCorrectionOutputTokens:
+        successfulLogs.length > 0 ? Math.round(totalCorrectionOutputTokens / successfulLogs.length) : 0,
+      modelBreakdown: [...modelBuckets.entries()].map(([model, entries]) => {
+        const correctedEntries = entries.filter((entry) => {
+          const responseBreakdown = entry.responseBreakdown as { correctionAttempts?: number } | null;
+          return (responseBreakdown?.correctionAttempts ?? 0) > 0;
+        });
+        const totalModelCorrectionAttempts = entries.reduce((sum, entry) => {
+          const responseBreakdown = entry.responseBreakdown as { correctionAttempts?: number } | null;
+          return sum + (responseBreakdown?.correctionAttempts ?? 0);
+        }, 0);
+        const totalModelCorrectionCost = entries.reduce((sum, entry) => {
+          const responseBreakdown = entry.responseBreakdown as
+            | { correctionUsage?: { estimatedTotalCostUsd?: number } }
+            | null;
+          return sum + (responseBreakdown?.correctionUsage?.estimatedTotalCostUsd ?? 0);
+        }, 0);
+        return {
         model,
         requests: entries.length,
         averageCostUsd: Number(
@@ -254,8 +329,12 @@ export class AnalyticsService {
         ),
         averageOutputTokens: Math.round(
           entries.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0) / entries.length
-        )
-      })),
+        ),
+        correctedRatePct: Math.round((correctedEntries.length / entries.length) * 100),
+        averageCorrectionAttempts: Number((totalModelCorrectionAttempts / entries.length).toFixed(2)),
+        averageCorrectionCostUsd: Number((totalModelCorrectionCost / entries.length).toFixed(6))
+      };
+      }),
       experimentBreakdown,
       experimentVerdict: this.buildExperimentVerdict(experimentBreakdown),
       sectionAverages: [...sectionTotals.entries()]
@@ -285,6 +364,10 @@ export class AnalyticsService {
         totalTokens: log.totalTokens ?? 0,
         estimatedTotalCostUsd: log.estimatedTotalCostUsd ?? 0,
         latencyMs: log.latencyMs ?? 0,
+        correctionAttempts:
+          ((log.responseBreakdown as { correctionAttempts?: number } | null)?.correctionAttempts ?? 0),
+        correctionEstimatedCostUsd:
+          ((log.responseBreakdown as { correctionUsage?: { estimatedTotalCostUsd?: number } } | null)?.correctionUsage?.estimatedTotalCostUsd ?? 0),
         feedbackRating: log.feedbackRating,
         savedToMenu: Boolean(log.savedToMenuAt),
         requestBreakdown: log.requestBreakdown,
@@ -301,6 +384,9 @@ export class AnalyticsService {
       averageRequestedMeals: number;
       averageInputTokens: number;
       averageOutputTokens: number;
+      correctedRatePct: number;
+      averageCorrectionAttempts: number;
+      averageCorrectionCostUsd: number;
       feedbackCount: number;
       positiveFeedbackRatePct: number | null;
       poorFeedbackRatePct: number | null;

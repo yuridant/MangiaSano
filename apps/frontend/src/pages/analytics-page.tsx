@@ -309,6 +309,37 @@ export function AnalyticsPage() {
           </div>
         </div>
 
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="app-subpanel">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Richieste autocorrette</p>
+            <p className="mt-2 text-2xl font-bold text-ink">
+              {data.aiUsage.correctedRequests}
+              <span className="ml-2 text-sm font-medium text-slate-400">
+                ({data.aiUsage.correctedRequestRatePct}%)
+              </span>
+            </p>
+          </div>
+          <div className="app-subpanel">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Iterazioni medie</p>
+            <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageCorrectionAttempts}</p>
+            <p className="text-xs text-slate-400">
+              {data.aiUsage.averageCorrectionAttemptsWhenCorrected} se c&apos;è stata correzione
+            </p>
+          </div>
+          <div className="app-subpanel">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Costo extra medio</p>
+            <p className="mt-2 text-2xl font-bold text-ink">{formatUsd(data.aiUsage.averageCorrectionCostUsd)}</p>
+            <p className="text-xs text-slate-400">
+              {formatUsd(data.aiUsage.averageCorrectionCostWhenCorrectedUsd)} quando scatta il retry
+            </p>
+          </div>
+          <div className="app-subpanel">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Token retry medi</p>
+            <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageCorrectionInputTokens}</p>
+            <p className="text-xs text-slate-400">input • {data.aiUsage.averageCorrectionOutputTokens} output</p>
+          </div>
+        </div>
+
         {data.aiUsage.modelBreakdown.length > 0 && (
           <div className="mt-5">
             <h3 className="mb-3 text-sm font-bold text-ink">Confronto per modello</h3>
@@ -329,6 +360,20 @@ export function AnalyticsPage() {
                     <div>
                       <p className="text-lg font-bold text-ink">{item.averageOutputTokens}</p>
                       <p className="text-[11px] text-slate-400">Output</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">{item.correctedRatePct}%</p>
+                      <p className="text-[11px] text-slate-400">Retry rate</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">{item.averageCorrectionAttempts}</p>
+                      <p className="text-[11px] text-slate-400">Iterazioni</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
+                      <p className="text-base font-bold text-ink">{formatUsd(item.averageCorrectionCostUsd)}</p>
+                      <p className="text-[11px] text-slate-400">Costo extra</p>
                     </div>
                   </div>
                 </div>
@@ -403,6 +448,14 @@ export function AnalyticsPage() {
                       <p className="text-xs uppercase tracking-wider text-slate-400">Output medio</p>
                       <p className="mt-1 font-semibold text-ink">{item.averageOutputTokens}</p>
                     </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Retry rate</p>
+                      <p className="mt-1 font-semibold text-ink">{item.correctedRatePct}%</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Iterazioni</p>
+                      <p className="mt-1 font-semibold text-ink">{item.averageCorrectionAttempts}</p>
+                    </div>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                     <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
@@ -421,6 +474,10 @@ export function AnalyticsPage() {
                       </p>
                       <p className="text-[11px] text-slate-400">Salvati</p>
                     </div>
+                  </div>
+                  <div className="mt-2 rounded-2xl bg-slate-50/80 px-3 py-2 text-center">
+                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Costo extra medio dei retry</p>
+                    <p className="mt-1 font-semibold text-ink">{formatUsd(item.averageCorrectionCostUsd)}</p>
                   </div>
                 </div>
               ))}
@@ -457,6 +514,7 @@ export function AnalyticsPage() {
                     <th className="px-3 py-2 font-semibold">Modello</th>
                     <th className="px-3 py-2 font-semibold">Pasti</th>
                     <th className="px-3 py-2 font-semibold">Feedback</th>
+                    <th className="px-3 py-2 font-semibold">Retry</th>
                     <th className="px-3 py-2 font-semibold">Input</th>
                     <th className="px-3 py-2 font-semibold">Output</th>
                     <th className="px-3 py-2 font-semibold">Costo</th>
@@ -486,9 +544,14 @@ export function AnalyticsPage() {
                           ? "Ottima"
                           : request.feedbackRating === "acceptable"
                             ? "Accettabile"
-                            : request.feedbackRating === "poor"
+                              : request.feedbackRating === "poor"
                               ? "Da rifare"
                               : "—"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {request.correctionAttempts > 0
+                          ? `${request.correctionAttempts} • ${formatUsd(request.correctionEstimatedCostUsd)}`
+                          : "—"}
                       </td>
                       <td className="px-3 py-3 text-slate-600">
                         {request.inputTokens}
