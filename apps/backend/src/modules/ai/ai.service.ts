@@ -429,10 +429,6 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         .map((meal) => this.normalizeRecipeName(meal.recipeName))
     );
 
-    const recipesToCreate = [...usedNewRecipeNames]
-      .map((recipeName) => recipesToCreateByName.get(recipeName))
-      .filter((recipe): recipe is NonNullable<typeof recipe> => Boolean(recipe));
-
     const usedIngredientNames = new Set<string>();
     const inferredMealTypesByRecipeName = new Map<string, Set<MealSlot>>();
 
@@ -443,6 +439,25 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       slots.add(meal.mealSlot);
       inferredMealTypesByRecipeName.set(normalizedRecipeName, slots);
     }
+
+    const recipesToCreate = [...usedNewRecipeNames]
+      .map((recipeName) => {
+        const explicitRecipe = recipesToCreateByName.get(recipeName);
+        if (explicitRecipe) return explicitRecipe;
+
+        const matchingMeal = normalizedResponse.weeklyPlan.find(
+          (meal) => !meal.recipeId && this.normalizeRecipeName(meal.recipeName) === recipeName
+        );
+        if (!matchingMeal) return null;
+
+        return {
+          name: matchingMeal.recipeName,
+          description: matchingMeal.recipeDescription,
+          mealTypes: [...(inferredMealTypesByRecipeName.get(recipeName) ?? new Set<MealSlot>())],
+          ingredients: []
+        };
+      })
+      .filter((recipe): recipe is NonNullable<typeof recipe> => Boolean(recipe));
 
     for (const recipe of recipesToCreate) {
       for (const ingredientName of recipe.ingredients) {
