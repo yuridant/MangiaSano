@@ -47,6 +47,11 @@ export function GeneratePage() {
     model: string;
     experimentVariant: "primary" | "secondary";
     experimentStrategy: "off" | "alternate" | "random";
+    correctionSummary: {
+      correctionAttempts: number;
+      corrected: boolean;
+      notes: string[];
+    };
   } | null>(null);
   const [planToSave, setPlanToSave] = useState<AiMealPlan[]>([]);
   const [goal, setGoal] = useState("Piano equilibrato con riduzione picchi glicemici");
@@ -177,7 +182,8 @@ export function GeneratePage() {
         generationId: data.generationId,
         model: data.model,
         experimentVariant: data.experimentVariant,
-        experimentStrategy: data.experimentStrategy
+        experimentStrategy: data.experimentStrategy,
+        correctionSummary: data.correctionSummary
       });
       setPlanToSave(sortMealPlans(data.result.weeklyPlan));
       setSelectedFeedback(null);
@@ -283,6 +289,20 @@ export function GeneratePage() {
           </div>
           <WeekGrid meals={previewMeals} weekStart={weekStart} />
         </div>
+
+        {generationMeta?.correctionSummary.corrected && (
+          <div className="rounded-2xl bg-amber-50 px-4 py-4 text-sm text-amber-800">
+            <p className="font-semibold">
+              L&apos;AI ha corretto automaticamente la proposta {generationMeta.correctionSummary.correctionAttempts}{" "}
+              {generationMeta.correctionSummary.correctionAttempts === 1 ? "volta" : "volte"} prima di mostrartela.
+            </p>
+            <div className="mt-2 flex flex-col gap-1">
+              {generationMeta.correctionSummary.notes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="app-panel">
           <h3 className="mb-3 text-sm font-bold text-ink">Com&apos;è questa proposta?</h3>

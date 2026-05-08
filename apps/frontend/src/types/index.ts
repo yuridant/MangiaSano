@@ -122,6 +122,11 @@ export interface AiGenerateResult {
   model: string;
   experimentVariant: "primary" | "secondary";
   experimentStrategy: "off" | "alternate" | "random";
+  correctionSummary: {
+    correctionAttempts: number;
+    corrected: boolean;
+    notes: string[];
+  };
   result: AiResponse;
 }
 

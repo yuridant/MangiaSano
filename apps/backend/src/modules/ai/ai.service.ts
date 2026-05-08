@@ -12,7 +12,6 @@ import { Prisma } from "@prisma/client";
 import { encodingForModel } from "js-tiktoken";
 import OpenAI from "openai";
 import type { TiktokenModel } from "js-tiktoken/lite";
-import type { ResponseUsage } from "openai/resources/responses/responses";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from "../../common/meal-slots";
@@ -53,6 +52,11 @@ export interface AiGenerateResult {
   model: string;
   experimentVariant: "primary" | "secondary";
   experimentStrategy: OpenAiExperimentMode;
+  correctionSummary: {
+    correctionAttempts: number;
+    corrected: boolean;
+    notes: string[];
+  };
   result: AiResponse;
 }
 
@@ -93,11 +97,35 @@ interface RequestBreakdown {
 
 type OpenAiExperimentMode = "off" | "alternate" | "random";
 
+interface UsageTotals {
+  inputTokens: number | null;
+  cachedInputTokens: number;
+  outputTokens: number | null;
+  totalTokens: number | null;
+}
+
+interface AiValidationIssue {
+  code:
+    | "slot_not_requested"
+    | "slot_duplicate"
+    | "slot_missing"
+    | "existing_recipe_incompatible_slot"
+    | "unknown_recipe_id"
+    | "new_recipe_missing"
+    | "new_recipe_incompatible_slot";
+  message: string;
+  dayOfWeek?: number;
+  mealSlot?: MealSlot;
+  recipeName?: string;
+}
+
 interface ModelSelection {
   model: string;
   strategy: OpenAiExperimentMode;
   variant: "primary" | "secondary";
 }
+
+const MAX_AI_CORRECTION_ATTEMPTS = 3;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -220,7 +248,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     });
 
     try {
-      const response = await this.getClient().responses.parse({
+      const initialResponse = await this.getClient().responses.parse({
         model,
         instructions: SYSTEM_PROMPT,
         input: userMessage,
@@ -230,16 +258,17 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         temperature: 0.7
       });
 
-      const parsed = response.output_parsed;
+      const parsed = initialResponse.output_parsed;
       if (!parsed) {
         throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
       }
-      const validated = this.validateAiResponse(
-        parsed,
-        recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
-        slots,
-        { requireCompleteCoverage: true }
-      );
+      const validation = await this.resolveAiResponseWithCorrections({
+        model,
+        initialResponseId: initialResponse.id,
+        initialResponse: parsed,
+        existingRecipes: recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
+        requestedSlots: slots
+      });
       const generationId = await this.logGeneration({
         userId,
         familyId,
@@ -252,21 +281,30 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         existingIngredientCount: context.existingIngredients.length,
         requestBreakdown,
         responseBreakdown: {
-          weeklyPlanCount: validated.weeklyPlan.length,
-          newRecipesCount: validated.newRecipes.length,
-          newIngredientsCount: validated.newIngredients.length
+          weeklyPlanCount: validation.result.weeklyPlan.length,
+          newRecipesCount: validation.result.newRecipes.length,
+          newIngredientsCount: validation.result.newIngredients.length,
+          correctionAttempts: validation.correctionAttempts
         },
-        usage: response.usage,
+        usageTotals: this.combineUsageTotals(
+          this.extractUsageTotals(initialResponse.usage),
+          ...validation.correctionUsages
+        ),
         success: true,
         latencyMs: Date.now() - startedAt,
-        openaiResponseId: response.id
+        openaiResponseId: validation.lastResponseId
       });
       return {
         generationId,
         model,
         experimentVariant: modelSelection.variant,
         experimentStrategy: modelSelection.strategy,
-        result: validated
+        correctionSummary: {
+          correctionAttempts: validation.correctionAttempts,
+          corrected: validation.correctionAttempts > 0,
+          notes: validation.notes
+        },
+        result: validation.result
       };
     } catch (error) {
       await this.logGeneration({
@@ -343,7 +381,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       })
     ]);
 
-    const normalizedResponse = this.validateAiResponse(
+    const validation = this.inspectAiResponse(
       {
         ...response,
         weeklyPlan: filteredPlan
@@ -352,6 +390,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       normalizedSelectedSlots,
       { requireCompleteCoverage: false }
     );
+    if (!validation.ok) {
+      throw new BadRequestException(validation.issues[0]?.message ?? "La risposta AI non è valida.");
+    }
+    const normalizedResponse = validation.result;
 
     const existingRecipesByName = new Map(
       existingRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
@@ -679,7 +721,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     existingIngredientCount: number;
     requestBreakdown: RequestBreakdown;
     responseBreakdown?: Record<string, number>;
-    usage?: ResponseUsage;
+    usageTotals?: UsageTotals;
     success: boolean;
     latencyMs: number;
     openaiResponseId?: string;
@@ -687,10 +729,9 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
   }): Promise<string | null> {
     try {
       const pricing = this.getPricingForModel(params.model);
-      const usage = params.usage;
-      const inputTokens = usage?.input_tokens ?? null;
-      const cachedInputTokens = usage?.input_tokens_details?.cached_tokens ?? 0;
-      const outputTokens = usage?.output_tokens ?? null;
+      const inputTokens = params.usageTotals?.inputTokens ?? null;
+      const cachedInputTokens = params.usageTotals?.cachedInputTokens ?? 0;
+      const outputTokens = params.usageTotals?.outputTokens ?? null;
       const billableInputTokens = inputTokens === null ? null : Math.max(inputTokens - cachedInputTokens, 0);
       const estimatedInputCostUsd =
         billableInputTokens === null
@@ -716,7 +757,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           inputTokens,
           cachedInputTokens,
           outputTokens,
-          totalTokens: usage?.total_tokens ?? null,
+          totalTokens: params.usageTotals?.totalTokens ?? null,
           estimatedInputCostUsd,
           estimatedOutputCostUsd,
           estimatedTotalCostUsd,
@@ -769,6 +810,19 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
     options: { requireCompleteCoverage: boolean }
   ) {
+    const validation = this.inspectAiResponse(response, existingRecipes, requestedSlots, options);
+    if (!validation.ok) {
+      throw new BadRequestException(validation.issues[0]?.message ?? "La risposta AI non è valida.");
+    }
+    return validation.result;
+  }
+
+  private inspectAiResponse(
+    response: AiResponse,
+    existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[],
+    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    options: { requireCompleteCoverage: boolean }
+  ): { ok: true; result: AiResponse } | { ok: false; issues: AiValidationIssue[] } {
     const requestedSlotKeys = new Set(requestedSlots.map((slot) => this.getSlotKey(slot.dayOfWeek, slot.mealSlot)));
     const returnedSlotKeys = new Set<string>();
     const existingRecipeIdsSet = new Set(existingRecipes.map((recipe) => recipe.id));
@@ -779,14 +833,29 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       response.newRecipes.map((recipe) => this.normalizeRecipeName(recipe.name))
     );
     const normalizedWeeklyPlan = response.weeklyPlan.map((meal) => ({ ...meal }));
+    const issues: AiValidationIssue[] = [];
 
     for (const meal of normalizedWeeklyPlan) {
       const slotKey = this.getSlotKey(meal.dayOfWeek, meal.mealSlot);
       if (!requestedSlotKeys.has(slotKey)) {
-        throw new BadRequestException("La risposta AI contiene slot non richiesti.");
+        issues.push({
+          code: "slot_not_requested",
+          message: `La risposta AI contiene uno slot non richiesto: ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeName: meal.recipeName
+        });
+        continue;
       }
       if (returnedSlotKeys.has(slotKey)) {
-        throw new BadRequestException("La risposta AI contiene slot duplicati.");
+        issues.push({
+          code: "slot_duplicate",
+          message: `La risposta AI contiene uno slot duplicato: ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeName: meal.recipeName
+        });
+        continue;
       }
       returnedSlotKeys.add(slotKey);
 
@@ -797,7 +866,13 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         if (existingRecipeIdsSet.has(meal.recipeId)) {
           const exactRecipe = existingRecipes.find((recipe) => recipe.id === meal.recipeId);
           if (exactRecipe && exactRecipe.mealTypes.length > 0 && !exactRecipe.mealTypes.includes(meal.mealSlot)) {
-            throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+            issues.push({
+              code: "existing_recipe_incompatible_slot",
+              message: `La ricetta "${exactRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+              dayOfWeek: meal.dayOfWeek,
+              mealSlot: meal.mealSlot,
+              recipeName: exactRecipe.name
+            });
           }
           continue;
         }
@@ -807,7 +882,14 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
             matchedExistingRecipe.mealTypes.length > 0 &&
             !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
           ) {
-            throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+            issues.push({
+              code: "existing_recipe_incompatible_slot",
+              message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+              dayOfWeek: meal.dayOfWeek,
+              mealSlot: meal.mealSlot,
+              recipeName: matchedExistingRecipe.name
+            });
+            continue;
           }
           meal.recipeId = matchedExistingRecipe.id;
           meal.recipeName = matchedExistingRecipe.name;
@@ -819,7 +901,14 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           continue;
         }
 
-        throw new BadRequestException("La risposta AI contiene recipeId non presenti nel database.");
+        issues.push({
+          code: "unknown_recipe_id",
+          message: `La risposta AI contiene un recipeId non risolvibile per "${meal.recipeName}" in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeName: meal.recipeName
+        });
+        continue;
       }
 
       if (matchedExistingRecipe) {
@@ -827,7 +916,14 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           matchedExistingRecipe.mealTypes.length > 0 &&
           !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
         ) {
-          throw new BadRequestException("La risposta AI usa una ricetta esistente in uno slot incompatibile.");
+          issues.push({
+            code: "existing_recipe_incompatible_slot",
+            message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            recipeName: matchedExistingRecipe.name
+          });
+          continue;
         }
         meal.recipeId = matchedExistingRecipe.id;
         meal.recipeName = matchedExistingRecipe.name;
@@ -835,7 +931,14 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
 
       if (!newRecipeNames.has(normalizedRecipeName)) {
-        throw new BadRequestException("La risposta AI contiene una nuova ricetta non presente in newRecipes.");
+        issues.push({
+          code: "new_recipe_missing",
+          message: `La nuova ricetta "${meal.recipeName}" usata in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non è presente in newRecipes.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeName: meal.recipeName
+        });
+        continue;
       }
 
       const matchingNewRecipe = response.newRecipes.find(
@@ -845,21 +948,179 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         matchingNewRecipe?.mealTypes?.length &&
         !matchingNewRecipe.mealTypes.includes(meal.mealSlot)
       ) {
-        throw new BadRequestException("La risposta AI assegna una nuova ricetta a uno slot incompatibile.");
+        issues.push({
+          code: "new_recipe_incompatible_slot",
+          message: `La nuova ricetta "${matchingNewRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot,
+          recipeName: matchingNewRecipe.name
+        });
       }
     }
 
     if (options.requireCompleteCoverage && returnedSlotKeys.size !== requestedSlotKeys.size) {
-      throw new BadRequestException("La risposta AI non copre tutti gli slot richiesti.");
+      for (const slot of requestedSlots) {
+        const slotKey = this.getSlotKey(slot.dayOfWeek, slot.mealSlot);
+        if (!returnedSlotKeys.has(slotKey)) {
+          issues.push({
+            code: "slot_missing",
+            message: `La risposta AI non copre lo slot richiesto ${this.describeSlot(slot.dayOfWeek, slot.mealSlot)}.`,
+            dayOfWeek: slot.dayOfWeek,
+            mealSlot: slot.mealSlot
+          });
+        }
+      }
+    }
+
+    if (issues.length > 0) {
+      return { ok: false, issues };
     }
 
     return {
-      ...response,
-      weeklyPlan: normalizedWeeklyPlan.sort((a, b) => {
-        if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
-        return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
-      })
+      ok: true,
+      result: {
+        ...response,
+        weeklyPlan: normalizedWeeklyPlan.sort((a, b) => {
+          if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+          return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+        })
+      }
     };
+  }
+
+  private async resolveAiResponseWithCorrections(params: {
+    model: string;
+    initialResponseId: string;
+    initialResponse: AiResponse;
+    existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[];
+    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[];
+  }) {
+    let currentResponse = params.initialResponse;
+    let previousResponseId = params.initialResponseId;
+    let correctionAttempts = 0;
+    const notes: string[] = [];
+    const correctionUsages: UsageTotals[] = [];
+
+    while (correctionAttempts <= MAX_AI_CORRECTION_ATTEMPTS) {
+      const validation = this.inspectAiResponse(
+        currentResponse,
+        params.existingRecipes,
+        params.requestedSlots,
+        { requireCompleteCoverage: true }
+      );
+
+      if (validation.ok) {
+        return {
+          result: validation.result,
+          correctionAttempts,
+          notes,
+          correctionUsages,
+          lastResponseId: previousResponseId
+        };
+      }
+
+      if (correctionAttempts === MAX_AI_CORRECTION_ATTEMPTS) {
+        throw new BadRequestException(
+          `L'AI non è riuscita a correggere automaticamente il piano dopo ${MAX_AI_CORRECTION_ATTEMPTS} tentativi. Ultimo problema: ${validation.issues[0]?.message ?? "vincoli non rispettati"}.`
+        );
+      }
+
+      correctionAttempts += 1;
+      const issueSummary = this.summarizeIssuesForUser(validation.issues);
+      notes.push(`Correzione automatica ${correctionAttempts}: ${issueSummary}`);
+
+      const followUpResponse = await this.getClient().responses.parse({
+        model: params.model,
+        previous_response_id: previousResponseId,
+        input: this.buildCorrectionPrompt(validation.issues),
+        text: {
+          format: zodTextFormat(aiResponseSchema, "weekly_menu_plan")
+        },
+        temperature: 0.4
+      });
+      const parsed = followUpResponse.output_parsed;
+      if (!parsed) {
+        throw new BadRequestException("L'AI non ha restituito un piano correggibile dopo una revisione.");
+      }
+
+      previousResponseId = followUpResponse.id;
+      correctionUsages.push(this.extractUsageTotals(followUpResponse.usage));
+      currentResponse = parsed;
+    }
+
+    throw new BadRequestException("L'AI non è riuscita a correggere il piano.");
+  }
+
+  private buildCorrectionPrompt(issues: AiValidationIssue[]) {
+    const uniqueLines = [...new Set(issues.map((issue) => {
+      switch (issue.code) {
+        case "existing_recipe_incompatible_slot":
+        case "new_recipe_incompatible_slot":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: la ricetta "${issue.recipeName}" non è adatta a questo tipo di pasto. Sostituiscila con una proposta compatibile.`;
+        case "slot_missing":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: manca nel piano. Aggiungi uno slot valido.`;
+        case "slot_duplicate":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: compare più di una volta. Mantieni una sola proposta valida.`;
+        case "slot_not_requested":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: non era stato richiesto. Rimuovilo dal piano finale.`;
+        case "unknown_recipe_id":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il recipeId di "${issue.recipeName}" non è valido. Usa una ricetta esistente corretta oppure trattala come nuova ricetta coerente.`;
+        case "new_recipe_missing":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: "${issue.recipeName}" è usata nel piano ma manca in newRecipes. Aggiungila correttamente oppure sostituiscila.`;
+      }
+    }))];
+
+    return [
+      "La tua risposta precedente non rispetta alcuni vincoli del piano settimanale.",
+      "Mantieni il formato structured output identico e conserva gli slot già validi quando possibile.",
+      "Correggi solo i problemi seguenti:",
+      uniqueLines.join("\n"),
+      "Ricontrolla internamente che ogni slot richiesto compaia una sola volta e che i mealTypes siano compatibili con il tipo di pasto."
+    ].join("\n\n");
+  }
+
+  private summarizeIssuesForUser(issues: AiValidationIssue[]) {
+    if (issues.length === 1) return issues[0].message;
+    return `${issues.length} problemi rilevati: ${issues
+      .slice(0, 3)
+      .map((issue) => issue.message)
+      .join(" | ")}${issues.length > 3 ? " | ..." : ""}`;
+  }
+
+  private describeSlot(dayOfWeek: number, mealSlot: MealSlot) {
+    const dayNames = ["Lunedi", "Martedi", "Mercoledi", "Giovedi", "Venerdi", "Sabato", "Domenica"];
+    return `${dayNames[dayOfWeek]} - ${MEAL_SLOT_LABELS[mealSlot]}`;
+  }
+
+  private extractUsageTotals(usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number } | null;
+  } | null | undefined): UsageTotals {
+    return {
+      inputTokens: usage?.input_tokens ?? null,
+      cachedInputTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? null,
+      totalTokens: usage?.total_tokens ?? null
+    };
+  }
+
+  private combineUsageTotals(...totals: UsageTotals[]): UsageTotals {
+    return totals.reduce<UsageTotals>(
+      (acc, current) => ({
+        inputTokens: (acc.inputTokens ?? 0) + (current.inputTokens ?? 0),
+        cachedInputTokens: acc.cachedInputTokens + current.cachedInputTokens,
+        outputTokens: (acc.outputTokens ?? 0) + (current.outputTokens ?? 0),
+        totalTokens: (acc.totalTokens ?? 0) + (current.totalTokens ?? 0)
+      }),
+      {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      }
+    );
   }
 
   private getSlotKey(dayOfWeek: number, mealSlot: MealSlot) {
