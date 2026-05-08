@@ -3,7 +3,7 @@ import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
 const PRIMARY_LINKS = [
-  { to: "/", label: "Menu" },
+  { to: "/menu", label: "Menu" },
   { to: "/recipes", label: "Ricette" },
   { to: "/shopping", label: "Spesa" },
   { to: "#more", label: "Altro" }
@@ -17,7 +17,6 @@ const SECONDARY_LINKS = [
 ] as const;
 
 const SIDEBAR_LINKS = [
-  { to: "/", label: "Dashboard" },
   { to: "/menu", label: "Menu settimanale" },
   { to: "/menu/generate", label: "Genera con AI" },
   { to: "/recipes", label: "Ricette" },
@@ -28,18 +27,15 @@ const SIDEBAR_LINKS = [
 ] as const;
 
 function matchesPath(pathname: string, to: string) {
-  if (to === "/") return pathname === "/";
   return pathname.startsWith(to);
 }
 
 function isSidebarLinkActive(pathname: string, to: string) {
-  if (to === "/") return pathname === "/";
   if (to === "/menu") return pathname === "/menu";
   return matchesPath(pathname, to);
 }
 
 function isPrimaryLinkActive(pathname: string, to: string) {
-  if (to === "/") return pathname === "/" || pathname === "/menu";
   return matchesPath(pathname, to);
 }
 

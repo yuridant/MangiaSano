@@ -100,7 +100,7 @@ export function AnalyticsPage() {
       <div className="app-page-header">
         <h1 className="text-2xl font-bold text-ink">Analytics</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Una vista d&apos;insieme su copertura dei menu, ricette e ingredienti usati davvero.
+          Una panoramica su copertura dei menu, ricette, ingredienti e utilizzo dell&apos;AI.
         </p>
       </div>
 
@@ -243,12 +243,12 @@ export function AnalyticsPage() {
           <div>
             <h2 className="font-bold text-ink">Costo richieste AI</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Stima basata sui token registrati e sul modello usato per ogni richiesta.
+              Stima basata sui token registrati e sul modello usato per ogni generazione.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <label className="block">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Modalita esperimento
+                  Modalità esperimento
                 </span>
                 <select
                   value={data.aiUsage.experiment.mode}
@@ -258,17 +258,17 @@ export function AnalyticsPage() {
                   disabled={experimentMutation.isPending}
                   className="mt-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-ink focus:border-sage focus:outline-none disabled:opacity-60"
                 >
-                  <option value="off">Off</option>
-                  <option value="alternate">Alternate</option>
-                  <option value="random">Random</option>
+                  <option value="off">Disattivata</option>
+                  <option value="alternate">Alternata</option>
+                  <option value="random">Casuale</option>
                 </select>
               </label>
               <div className="text-xs text-slate-400">
                 <p>
-                  A: <span className="font-semibold text-ink">{data.aiUsage.experiment.primaryModel}</span>
+                  Gruppo A: <span className="font-semibold text-ink">{data.aiUsage.experiment.primaryModel}</span>
                 </p>
                 <p>
-                  B: <span className="font-semibold text-ink">{data.aiUsage.experiment.secondaryModel}</span>
+                  Gruppo B: <span className="font-semibold text-ink">{data.aiUsage.experiment.secondaryModel}</span>
                 </p>
               </div>
             </div>
@@ -276,7 +276,7 @@ export function AnalyticsPage() {
               <p className="mt-2 text-xs text-rose-500">
                 {experimentMutation.error instanceof Error
                   ? experimentMutation.error.message
-                  : "Impossibile aggiornare la modalita dell'esperimento."}
+                  : "Impossibile aggiornare la modalità dell'esperimento."}
               </p>
             )}
           </div>
@@ -300,18 +300,18 @@ export function AnalyticsPage() {
           <div className="app-subpanel">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Input medio</p>
             <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageInputTokens}</p>
-            <p className="text-xs text-slate-400">token</p>
+            <p className="text-xs text-slate-400">token in ingresso</p>
           </div>
           <div className="app-subpanel">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Output medio</p>
             <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageOutputTokens}</p>
-            <p className="text-xs text-slate-400">token</p>
+            <p className="text-xs text-slate-400">token in uscita</p>
           </div>
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="app-subpanel">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Richieste autocorrette</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Generazioni corrette automaticamente</p>
             <p className="mt-2 text-2xl font-bold text-ink">
               {data.aiUsage.correctedRequests}
               <span className="ml-2 text-sm font-medium text-slate-400">
@@ -320,23 +320,25 @@ export function AnalyticsPage() {
             </p>
           </div>
           <div className="app-subpanel">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Iterazioni medie</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Correzioni medie per generazione</p>
             <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageCorrectionAttempts}</p>
             <p className="text-xs text-slate-400">
-              {data.aiUsage.averageCorrectionAttemptsWhenCorrected} se c&apos;è stata correzione
+              {data.aiUsage.averageCorrectionAttemptsWhenCorrected} tra i soli casi corretti
             </p>
           </div>
           <div className="app-subpanel">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Costo extra medio</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Costo medio delle correzioni</p>
             <p className="mt-2 text-2xl font-bold text-ink">{formatUsd(data.aiUsage.averageCorrectionCostUsd)}</p>
             <p className="text-xs text-slate-400">
-              {formatUsd(data.aiUsage.averageCorrectionCostWhenCorrectedUsd)} quando scatta il retry
+              {formatUsd(data.aiUsage.averageCorrectionCostWhenCorrectedUsd)} nei soli casi corretti
             </p>
           </div>
           <div className="app-subpanel">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Token retry medi</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Token medi per correzione</p>
             <p className="mt-2 text-2xl font-bold text-ink">{data.aiUsage.averageCorrectionInputTokens}</p>
-            <p className="text-xs text-slate-400">input • {data.aiUsage.averageCorrectionOutputTokens} output</p>
+            <p className="text-xs text-slate-400">
+              ingresso • {data.aiUsage.averageCorrectionOutputTokens} in uscita
+            </p>
           </div>
         </div>
 
@@ -355,25 +357,25 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <p className="text-lg font-bold text-ink">{item.averageInputTokens}</p>
-                      <p className="text-[11px] text-slate-400">Input</p>
+                      <p className="text-[11px] text-slate-400">Ingresso</p>
                     </div>
                     <div>
                       <p className="text-lg font-bold text-ink">{item.averageOutputTokens}</p>
-                      <p className="text-[11px] text-slate-400">Output</p>
+                      <p className="text-[11px] text-slate-400">Uscita</p>
                     </div>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                     <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
                       <p className="text-base font-bold text-ink">{item.correctedRatePct}%</p>
-                      <p className="text-[11px] text-slate-400">Retry rate</p>
+                      <p className="text-[11px] text-slate-400">Tasso di correzione</p>
                     </div>
                     <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
                       <p className="text-base font-bold text-ink">{item.averageCorrectionAttempts}</p>
-                      <p className="text-[11px] text-slate-400">Iterazioni</p>
+                      <p className="text-[11px] text-slate-400">Correzioni medie</p>
                     </div>
                     <div className="rounded-2xl bg-slate-50/80 px-2 py-2">
                       <p className="text-base font-bold text-ink">{formatUsd(item.averageCorrectionCostUsd)}</p>
-                      <p className="text-[11px] text-slate-400">Costo extra</p>
+                      <p className="text-[11px] text-slate-400">Costo correzioni</p>
                     </div>
                   </div>
                 </div>
@@ -391,19 +393,19 @@ export function AnalyticsPage() {
               <p className="mt-2 text-sm text-slate-600">{data.aiUsage.experimentVerdict.recommendation}</p>
               <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
                 <div className="rounded-2xl bg-white/80 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta costo richiesta B vs A</p>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Scostamento costo richiesta B vs A</p>
                   <p className="mt-1 font-semibold text-ink">
                     {formatSignedPercent(data.aiUsage.experimentVerdict.costDeltaPct)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white/80 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta costo per pasto B vs A</p>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Scostamento costo per pasto B vs A</p>
                   <p className="mt-1 font-semibold text-ink">
                     {formatSignedPercent(data.aiUsage.experimentVerdict.costPerMealDeltaPct)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white/80 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Gap pasti medi</p>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Differenza nei pasti medi richiesti</p>
                   <p className="mt-1 font-semibold text-ink">
                     {data.aiUsage.experimentVerdict.requestedMealsGap ?? "n/d"}
                   </p>
@@ -411,13 +413,13 @@ export function AnalyticsPage() {
               </div>
               <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                 <div className="rounded-2xl bg-white/80 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta feedback positivi B vs A</p>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Scostamento feedback positivi B vs A</p>
                   <p className="mt-1 font-semibold text-ink">
                     {formatSignedPercent(data.aiUsage.experimentVerdict.positiveFeedbackGap)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white/80 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Delta feedback scarsi B vs A</p>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Scostamento feedback negativi B vs A</p>
                   <p className="mt-1 font-semibold text-ink">
                     {formatSignedPercent(data.aiUsage.experimentVerdict.poorFeedbackGap)}
                   </p>
@@ -449,11 +451,11 @@ export function AnalyticsPage() {
                       <p className="mt-1 font-semibold text-ink">{item.averageOutputTokens}</p>
                     </div>
                     <div>
-                      <p className="text-xs uppercase tracking-wider text-slate-400">Retry rate</p>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Tasso di correzione</p>
                       <p className="mt-1 font-semibold text-ink">{item.correctedRatePct}%</p>
                     </div>
                     <div>
-                      <p className="text-xs uppercase tracking-wider text-slate-400">Iterazioni</p>
+                      <p className="text-xs uppercase tracking-wider text-slate-400">Correzioni medie</p>
                       <p className="mt-1 font-semibold text-ink">{item.averageCorrectionAttempts}</p>
                     </div>
                   </div>
@@ -476,7 +478,7 @@ export function AnalyticsPage() {
                     </div>
                   </div>
                   <div className="mt-2 rounded-2xl bg-slate-50/80 px-3 py-2 text-center">
-                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Costo extra medio dei retry</p>
+                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Costo medio delle correzioni</p>
                     <p className="mt-1 font-semibold text-ink">{formatUsd(item.averageCorrectionCostUsd)}</p>
                   </div>
                 </div>
@@ -514,9 +516,9 @@ export function AnalyticsPage() {
                     <th className="px-3 py-2 font-semibold">Modello</th>
                     <th className="px-3 py-2 font-semibold">Pasti</th>
                     <th className="px-3 py-2 font-semibold">Feedback</th>
-                    <th className="px-3 py-2 font-semibold">Retry</th>
-                    <th className="px-3 py-2 font-semibold">Input</th>
-                    <th className="px-3 py-2 font-semibold">Output</th>
+                    <th className="px-3 py-2 font-semibold">Correzioni</th>
+                    <th className="px-3 py-2 font-semibold">Token ingresso</th>
+                    <th className="px-3 py-2 font-semibold">Token uscita</th>
                     <th className="px-3 py-2 font-semibold">Costo</th>
                   </tr>
                 </thead>

@@ -3,7 +3,6 @@ import { AppShell } from "../layouts/app-shell";
 import { LoginPage } from "../pages/login-page";
 import { RegisterPage } from "../pages/register-page";
 import { InvitePage } from "../pages/invite-page";
-import { DashboardPage } from "../pages/dashboard-page";
 import { MenuPage } from "../pages/menu-page";
 import { GeneratePage } from "../pages/generate-page";
 import { IngredientsPage } from "../pages/ingredients-page";
@@ -20,7 +19,7 @@ export const router = createBrowserRouter([
     path: "/",
     element: <AppShell />,
     children: [
-      { index: true, element: <DashboardPage /> },
+      { index: true, element: <Navigate to="/menu" replace /> },
       { path: "menu", element: <MenuPage /> },
       { path: "menu/generate", element: <GeneratePage /> },
       { path: "ingredients", element: <IngredientsPage /> },
@@ -32,5 +31,5 @@ export const router = createBrowserRouter([
       { path: "account", element: <Navigate to="/settings?tab=account" replace /> }
     ]
   },
-  { path: "*", element: <Navigate to="/" replace /> }
+  { path: "*", element: <Navigate to="/menu" replace /> }
 ]);

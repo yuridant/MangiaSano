@@ -18,7 +18,7 @@ export function LoginPage() {
     window.sessionStorage.removeItem("mangiasano.loginMessage");
   }, []);
 
-  if (isReady && user) return <Navigate to="/" replace />;
+  if (isReady && user) return <Navigate to="/menu" replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

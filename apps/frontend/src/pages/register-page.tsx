@@ -14,7 +14,7 @@ export function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (isReady && user) return <Navigate to="/" replace />;
+  if (isReady && user) return <Navigate to="/menu" replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
