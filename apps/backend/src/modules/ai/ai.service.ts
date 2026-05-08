@@ -127,6 +127,16 @@ interface AiValidationIssue {
   recipeName?: string;
 }
 
+interface AiCorrectionResolution {
+  result: AiResponse;
+  correctionAttempts: number;
+  reachedLimit: boolean;
+  issues: AiValidationIssue[];
+  notes: string[];
+  correctionUsages: UsageTotals[];
+  lastResponseId: string;
+}
+
 interface ModelSelection {
   model: string;
   strategy: OpenAiExperimentMode;
@@ -381,7 +391,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       requestedSlotKeys.has(this.getSlotKey(meal.dayOfWeek, meal.mealSlot))
     );
 
-    const [existingRecipes, existingIngredients] = await Promise.all([
+    const [existingRecipes, existingIngredients, generationLog] = await Promise.all([
       this.prisma.recipe.findMany({
         where: { familyId },
         select: { id: true, name: true, mealTypes: true }
@@ -389,22 +399,68 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       this.prisma.ingredient.findMany({
         where: { familyId },
         select: { id: true, name: true }
-      })
+      }),
+      generationId
+        ? this.prisma.aiGenerationLog.findFirst({
+            where: { id: generationId, userId, familyId },
+            select: {
+              id: true,
+              model: true,
+              openaiResponseId: true,
+              inputTokens: true,
+              cachedInputTokens: true,
+              outputTokens: true,
+              totalTokens: true,
+              responseBreakdown: true
+            }
+          })
+        : Promise.resolve(null)
     ]);
 
+    let responseToApply: AiResponse = {
+      ...response,
+      weeklyPlan: filteredPlan
+    };
+
+    if (generationLog?.openaiResponseId) {
+      const correctionResult = await this.resolveAiResponseWithCorrections({
+        model: generationLog.model,
+        initialResponseId: generationLog.openaiResponseId,
+        initialResponse: responseToApply,
+        existingRecipes,
+        requestedSlots: normalizedSelectedSlots,
+        requireCompleteCoverage: false,
+        allowIncompatibleSlots: true,
+        issueCodes: ["unknown_recipe_id", "new_recipe_missing", "slot_duplicate", "slot_not_requested"],
+        includeCurrentResponseInPrompt: true
+      });
+      responseToApply = correctionResult.result;
+      if (correctionResult.correctionAttempts > 0) {
+        await this.updateGenerationLogAfterAdditionalCorrections(generationLog, correctionResult);
+      }
+    }
+
     const validation = this.inspectAiResponse(
-      {
-        ...response,
-        weeklyPlan: filteredPlan
-      },
+      responseToApply,
       existingRecipes,
       normalizedSelectedSlots,
       { requireCompleteCoverage: false, allowIncompatibleSlots: true }
     );
-    if (!validation.ok) {
+    const hasOnlySaveRecoverableIssues =
+      !validation.ok &&
+      validation.issues.every((issue) => this.isSaveRecoverableIssue(issue.code));
+    if (!validation.ok && !hasOnlySaveRecoverableIssues) {
       throw new BadRequestException(validation.issues[0]?.message ?? "La risposta AI non è valida.");
     }
-    const normalizedResponse = validation.result;
+    const normalizedResponse = validation.ok
+      ? validation.result
+      : {
+          ...responseToApply,
+          weeklyPlan: [...responseToApply.weeklyPlan].sort((a, b) => {
+            if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+            return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+          })
+        };
 
     const existingRecipesByName = new Map(
       existingRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
@@ -1069,19 +1125,25 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     initialResponse: AiResponse;
     existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[];
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[];
-  }) {
+    requireCompleteCoverage?: boolean;
+    allowIncompatibleSlots?: boolean;
+    issueCodes?: AiValidationIssue["code"][];
+    includeCurrentResponseInPrompt?: boolean;
+  }): Promise<AiCorrectionResolution> {
     let currentResponse = params.initialResponse;
     let previousResponseId = params.initialResponseId;
     let correctionAttempts = 0;
     const notes: string[] = [];
     const correctionUsages: UsageTotals[] = [];
+    const requireCompleteCoverage = params.requireCompleteCoverage ?? true;
+    const allowIncompatibleSlots = params.allowIncompatibleSlots ?? false;
 
     while (correctionAttempts <= MAX_AI_CORRECTION_ATTEMPTS) {
       const validation = this.inspectAiResponse(
         currentResponse,
         params.existingRecipes,
         params.requestedSlots,
-        { requireCompleteCoverage: true }
+        { requireCompleteCoverage, allowIncompatibleSlots }
       );
 
       if (validation.ok) {
@@ -1096,14 +1158,15 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         };
       }
 
-      if (correctionAttempts === MAX_AI_CORRECTION_ATTEMPTS) {
-        notes.push(
-          `Limite di correzioni raggiunto: restano ${validation.issues.length} criticità da controllare manualmente.`
-        );
+      const issuesToCorrect = params.issueCodes?.length
+        ? validation.issues.filter((issue) => params.issueCodes!.includes(issue.code))
+        : validation.issues;
+
+      if (issuesToCorrect.length === 0) {
         return {
           result: currentResponse,
           correctionAttempts,
-          reachedLimit: true,
+          reachedLimit: false,
           issues: validation.issues,
           notes,
           correctionUsages,
@@ -1111,14 +1174,32 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         };
       }
 
+      if (correctionAttempts === MAX_AI_CORRECTION_ATTEMPTS) {
+        notes.push(
+          `Limite di correzioni raggiunto: restano ${issuesToCorrect.length} criticità da controllare manualmente.`
+        );
+        return {
+          result: currentResponse,
+          correctionAttempts,
+          reachedLimit: true,
+          issues: issuesToCorrect,
+          notes,
+          correctionUsages,
+          lastResponseId: previousResponseId
+        };
+      }
+
       correctionAttempts += 1;
-      const issueSummary = this.summarizeIssuesForUser(validation.issues);
+      const issueSummary = this.summarizeIssuesForUser(issuesToCorrect);
       notes.push(`Correzione automatica ${correctionAttempts}: ${issueSummary}`);
 
       const followUpResponse = await this.getClient().responses.parse({
         model: params.model,
         previous_response_id: previousResponseId,
-        input: this.buildCorrectionPrompt(validation.issues),
+        input: this.buildCorrectionPrompt(issuesToCorrect, currentResponse, {
+          requireCompleteCoverage,
+          includeCurrentResponseInPrompt: params.includeCurrentResponseInPrompt ?? true
+        }),
         text: {
           format: zodTextFormat(aiResponseSchema, "weekly_menu_plan")
         },
@@ -1131,13 +1212,17 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
       previousResponseId = followUpResponse.id;
       correctionUsages.push(this.extractUsageTotals(followUpResponse.usage));
-      currentResponse = parsed;
+      currentResponse = this.mergeAiResponses(currentResponse, parsed);
     }
 
     throw new BadRequestException("L'AI non è riuscita a correggere il piano.");
   }
 
-  private buildCorrectionPrompt(issues: AiValidationIssue[]) {
+  private buildCorrectionPrompt(
+    issues: AiValidationIssue[],
+    currentResponse: AiResponse,
+    options: { requireCompleteCoverage: boolean; includeCurrentResponseInPrompt: boolean }
+  ) {
     const uniqueLines = [...new Set(issues.map((issue) => {
       switch (issue.code) {
         case "existing_recipe_incompatible_slot":
@@ -1159,10 +1244,17 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     return [
       "La tua risposta precedente non rispetta alcuni vincoli del piano settimanale.",
       "Mantieni il formato structured output identico e conserva gli slot già validi quando possibile.",
+      options.includeCurrentResponseInPrompt
+        ? `Questa è la versione strutturata corrente da correggere e completare senza perdere i dati già validi:\n${JSON.stringify(currentResponse)}`
+        : "",
       "Correggi solo i problemi seguenti:",
       uniqueLines.join("\n"),
-      "Ricontrolla internamente che ogni slot richiesto compaia una sola volta e che i mealTypes siano compatibili con il tipo di pasto."
-    ].join("\n\n");
+      options.requireCompleteCoverage
+        ? "Ricontrolla internamente che ogni slot richiesto compaia una sola volta e che i mealTypes siano compatibili con il tipo di pasto."
+        : "Restituisci un oggetto strutturato completo e coerente con il piano corrente, correggendo i riferimenti alle ricette e mantenendo invariati gli slot già validi."
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   private summarizeIssuesForUser(issues: AiValidationIssue[]) {
@@ -1229,6 +1321,90 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private normalizeRecipeName(name: string) {
     return name.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  private mergeAiResponses(base: AiResponse, patch: AiResponse): AiResponse {
+    const weeklyPlanBySlot = new Map(
+      base.weeklyPlan.map((meal) => [this.getSlotKey(meal.dayOfWeek, meal.mealSlot), meal])
+    );
+    for (const meal of patch.weeklyPlan) {
+      weeklyPlanBySlot.set(this.getSlotKey(meal.dayOfWeek, meal.mealSlot), meal);
+    }
+
+    const newRecipesByName = new Map(
+      base.newRecipes.map((recipe) => [this.normalizeRecipeName(recipe.name), recipe])
+    );
+    for (const recipe of patch.newRecipes) {
+      newRecipesByName.set(this.normalizeRecipeName(recipe.name), recipe);
+    }
+
+    const newIngredientsByName = new Map(
+      base.newIngredients.map((ingredient) => [this.normalizeRecipeName(ingredient.name), ingredient])
+    );
+    for (const ingredient of patch.newIngredients) {
+      newIngredientsByName.set(this.normalizeRecipeName(ingredient.name), ingredient);
+    }
+
+    return {
+      weeklyPlan: [...weeklyPlanBySlot.values()],
+      newRecipes: [...newRecipesByName.values()],
+      newIngredients: [...newIngredientsByName.values()]
+    };
+  }
+
+  private isSaveRecoverableIssue(code: AiValidationIssue["code"]) {
+    return code === "unknown_recipe_id" || code === "new_recipe_missing";
+  }
+
+  private async updateGenerationLogAfterAdditionalCorrections(
+    generationLog: {
+      id: string;
+      model: string;
+      inputTokens: number | null;
+      cachedInputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
+      responseBreakdown: Prisma.JsonValue | null;
+    },
+    correctionResult: AiCorrectionResolution
+  ) {
+    const extraUsage = this.combineUsageTotals(...correctionResult.correctionUsages);
+    if ((extraUsage.totalTokens ?? 0) === 0) return;
+
+    const pricing = this.getPricingForModel(generationLog.model);
+    const inputTokens = (generationLog.inputTokens ?? 0) + (extraUsage.inputTokens ?? 0);
+    const cachedInputTokens = (generationLog.cachedInputTokens ?? 0) + extraUsage.cachedInputTokens;
+    const outputTokens = (generationLog.outputTokens ?? 0) + (extraUsage.outputTokens ?? 0);
+    const totalTokens = (generationLog.totalTokens ?? 0) + (extraUsage.totalTokens ?? 0);
+    const billableInputTokens = Math.max(inputTokens - cachedInputTokens, 0);
+    const estimatedInputCostUsd = Number(
+      ((((billableInputTokens / 1_000_000) * pricing.input) + ((cachedInputTokens / 1_000_000) * pricing.cachedInput))).toFixed(6)
+    );
+    const estimatedOutputCostUsd = Number((((outputTokens / 1_000_000) * pricing.output)).toFixed(6));
+    const previousBreakdown =
+      generationLog.responseBreakdown && typeof generationLog.responseBreakdown === "object" && !Array.isArray(generationLog.responseBreakdown)
+        ? (generationLog.responseBreakdown as Record<string, unknown>)
+        : {};
+
+    await this.prisma.aiGenerationLog.update({
+      where: { id: generationLog.id },
+      data: {
+        openaiResponseId: correctionResult.lastResponseId,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        totalTokens,
+        estimatedInputCostUsd,
+        estimatedOutputCostUsd,
+        estimatedTotalCostUsd: Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6)),
+        responseBreakdown: {
+          ...previousBreakdown,
+          savePhaseCorrectionAttempts: correctionResult.correctionAttempts,
+          savePhaseCorrectionUsage: this.buildUsageSummary(generationLog.model, extraUsage),
+          savePhaseCorrectionNotes: correctionResult.notes
+        } as Prisma.InputJsonValue
+      }
+    });
   }
 
   private parseWeekStart(weekStart: string) {
