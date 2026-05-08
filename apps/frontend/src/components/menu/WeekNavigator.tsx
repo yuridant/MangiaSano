@@ -26,27 +26,34 @@ export function WeekNavigator({
   };
 
   return (
-    <div className="mt-4 flex items-center gap-3">
-      <button onClick={() => shiftWeek(-7)} className="app-btn-xs app-btn-secondary" type="button">
-        ← Prec.
-      </button>
-      <div className="relative flex-1 text-center">
-        <button
-          type="button"
-          onClick={() => setCalendarOpen((prev) => !prev)}
-          className="inline-flex flex-col items-center rounded-2xl px-3 py-2 transition hover:bg-slate-50"
-        >
-          <p className="text-sm font-semibold text-ink underline decoration-slate-200 underline-offset-4">
-            {formatWeekRange(weekStart, includeYear)}
-          </p>
-          {showCurrentLabel && isCurrentWeek && (
-            <span className="text-xs font-medium text-sage">Settimana corrente</span>
-          )}
-          {!isCurrentWeek && <span className="text-[11px] text-slate-400">Apri calendario</span>}
+    <>
+      <div className="mt-4 flex items-center gap-3">
+        <button onClick={() => shiftWeek(-7)} className="app-btn-xs app-btn-secondary" type="button">
+          ← Prec.
         </button>
+        <div className="flex-1 text-center">
+          <button
+            type="button"
+            onClick={() => setCalendarOpen((prev) => !prev)}
+            className="inline-flex flex-col items-center rounded-2xl px-3 py-2 transition hover:bg-slate-50"
+          >
+            <p className="text-sm font-semibold text-ink underline decoration-slate-200 underline-offset-4">
+              {formatWeekRange(weekStart, includeYear)}
+            </p>
+            {showCurrentLabel && isCurrentWeek && (
+              <span className="text-xs font-medium text-sage">Settimana corrente</span>
+            )}
+            {!isCurrentWeek && <span className="text-[11px] text-slate-400">Apri calendario</span>}
+          </button>
+        </div>
+        <button onClick={() => shiftWeek(7)} className="app-btn-xs app-btn-secondary" type="button">
+          Succ. →
+        </button>
+      </div>
 
-        {calendarOpen && (
-          <div className="absolute left-1/2 top-full z-20 mt-2 w-[260px] -translate-x-1/2 rounded-3xl border border-slate-200 bg-white p-4 text-left shadow-2xl">
+      {calendarOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
+          <div className="w-full max-w-sm rounded-[30px] border border-slate-200 bg-white p-6 text-left shadow-2xl">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Scegli un giorno per aprire la sua settimana
             </p>
@@ -60,7 +67,7 @@ export function WeekNavigator({
               }}
               className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-ink focus:border-sage focus:outline-none"
             />
-            <div className="mt-3 flex gap-2">
+            <div className="mt-4 flex gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -80,11 +87,8 @@ export function WeekNavigator({
               </button>
             </div>
           </div>
-        )}
-      </div>
-      <button onClick={() => shiftWeek(7)} className="app-btn-xs app-btn-secondary" type="button">
-        Succ. →
-      </button>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
