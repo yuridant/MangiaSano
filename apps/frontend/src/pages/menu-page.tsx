@@ -206,6 +206,9 @@ export function MenuPage() {
     );
   };
 
+  const allFilledMealIds = meals.map((meal) => meal.id);
+  const allFilledMealsSelected = allFilledMealIds.length > 0 && selectedMealIds.length === allFilledMealIds.length;
+
   return (
     <div className="flex flex-col gap-5">
       <div className="app-page-header">
@@ -252,6 +255,15 @@ export function MenuPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {selectionMode && meals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedMealIds(allFilledMealsSelected ? [] : allFilledMealIds)}
+                className="app-btn-xs app-btn-secondary"
+              >
+                {allFilledMealsSelected ? "Deseleziona tutti" : "Seleziona tutti"}
+              </button>
+            )}
             {selectionMode && selectedMealIds.length > 0 && (
               <button
                 type="button"
