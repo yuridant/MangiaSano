@@ -108,12 +108,14 @@ export interface FamilyDetail {
 }
 
 export type AiNutritionTag = "carb" | "protein" | "fat" | "vegetable";
+export type AiProteinSource = "meat" | "fish" | "legume" | "egg" | "dairy" | "plant_based" | "other";
 
 export interface AiMealItem {
   recipeId?: string;
   recipeName: string;
   recipeDescription?: string;
   nutritionTags?: AiNutritionTag[];
+  proteinSource?: AiProteinSource;
 }
 
 export interface AiMealPlan {

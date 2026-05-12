@@ -19,11 +19,13 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { FamiliesService } from "../families/families.service";
 
 const nutritionTagSchema = z.enum(["carb", "protein", "fat", "vegetable"]);
+const proteinSourceSchema = z.enum(["meat", "fish", "legume", "egg", "dairy", "plant_based", "other"]);
 const aiMealItemSchema = z.object({
   recipeId: z.string().optional(),
   recipeName: z.string(),
   recipeDescription: z.string().optional(),
-  nutritionTags: z.array(nutritionTagSchema).optional()
+  nutritionTags: z.array(nutritionTagSchema).optional(),
+  proteinSource: proteinSourceSchema.optional()
 });
 
 export const aiResponseSchema = z.object({
@@ -125,6 +127,10 @@ interface AiValidationIssue {
     | "slot_missing"
     | "meal_missing_items"
     | "meal_missing_nutrition"
+    | "protein_source_missing"
+    | "meat_limit_exceeded"
+    | "meat_too_close"
+    | "protein_variety_low"
     | "existing_recipe_incompatible_slot"
     | "unknown_recipe_id"
     | "new_recipe_missing"
@@ -254,7 +260,11 @@ Se usi una ricetta esistente compila recipeId con un id presente in existingReci
 Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
 Per ogni nuova ricetta compila mealTypes in modo coerente con gli slot in cui la usi.
 Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
+Quando un item contiene proteine valorizza anche proteinSource scegliendo tra meat, fish, legume, egg, dairy, plant_based, other.
 Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure più componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
+Varia molto le fonti proteiche nell'arco della settimana.
+Evita la carne in più di 3 pasti principali a settimana.
+Distribuisci gli eventuali pasti con carne lungo la settimana, evitando pasti con carne troppo ravvicinati e soprattutto evitando di concentrare la carne in giorni consecutivi o nello stesso giorno quando esistono alternative valide.
 Non fondere artificialmente ricette diverse in una sola ricetta se nella realtà sono due portate separate dello stesso pasto.
 Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
 Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
@@ -1007,6 +1017,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       items: meal.items.map((item) => ({ ...item }))
     }));
     const issues: AiValidationIssue[] = [];
+    const mainMealProteinSources: { dayOfWeek: number; mealSlot: MealSlot; sources: Set<string> }[] = [];
+    const meatMeals: { dayOfWeek: number; mealSlot: MealSlot }[] = [];
 
     for (const meal of normalizedWeeklyPlan) {
       const slotKey = this.getSlotKey(meal.dayOfWeek, meal.mealSlot);
@@ -1152,6 +1164,13 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         const nutritionTags = new Set(
           meal.items.flatMap((item) => item.nutritionTags ?? [])
         );
+        const proteinItems = meal.items.filter((item) => item.nutritionTags?.includes("protein"));
+        const proteinSources = new Set(
+          proteinItems
+            .map((item) => item.proteinSource)
+            .filter((value): value is z.infer<typeof proteinSourceSchema> => Boolean(value))
+        );
+
         if (nutritionTags.size === 0) {
           issues.push({
             code: "meal_missing_nutrition",
@@ -1171,7 +1190,67 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
             mealSlot: meal.mealSlot
           });
         }
+
+        if (proteinItems.length > 0 && proteinSources.size === 0) {
+          issues.push({
+            code: "protein_source_missing",
+            message: `Lo slot ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} include proteine ma non specifica la fonte proteica con proteinSource.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot
+          });
+        }
+
+        if (proteinSources.size > 0) {
+          mainMealProteinSources.push({
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            sources: proteinSources
+          });
+        }
+        if (proteinSources.has("meat")) {
+          meatMeals.push({ dayOfWeek: meal.dayOfWeek, mealSlot: meal.mealSlot });
+        }
       }
+    }
+
+    if (meatMeals.length > 3) {
+      const offendingMeal = meatMeals[3];
+      issues.push({
+        code: "meat_limit_exceeded",
+        message: `La carne compare in più di 3 pasti principali nella settimana selezionata. Riducila e varia con pesce, legumi, uova o fonti vegetali.`,
+        dayOfWeek: offendingMeal.dayOfWeek,
+        mealSlot: offendingMeal.mealSlot
+      });
+    }
+
+    const sortedMeatMeals = [...meatMeals].sort((a, b) => {
+      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+      return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
+    });
+    for (let index = 1; index < sortedMeatMeals.length; index += 1) {
+      const previousMeal = sortedMeatMeals[index - 1];
+      const currentMeal = sortedMeatMeals[index];
+      if (currentMeal.dayOfWeek - previousMeal.dayOfWeek <= 1) {
+        issues.push({
+          code: "meat_too_close",
+          message: `I pasti con carne sono troppo ravvicinati tra ${this.describeSlot(previousMeal.dayOfWeek, previousMeal.mealSlot)} e ${this.describeSlot(currentMeal.dayOfWeek, currentMeal.mealSlot)}. Distribuiscili meglio nella settimana.`,
+          dayOfWeek: currentMeal.dayOfWeek,
+          mealSlot: currentMeal.mealSlot
+        });
+      }
+    }
+
+    const distinctProteinSources = new Set(
+      mainMealProteinSources.flatMap((meal) => [...meal.sources].filter((source) => source !== "other"))
+    );
+    if (mainMealProteinSources.length >= 4 && distinctProteinSources.size < 2) {
+      const targetMeal = mainMealProteinSources[mainMealProteinSources.length - 1];
+      issues.push({
+        code: "protein_variety_low",
+        message: "Le fonti proteiche risultano poco varie nella settimana selezionata. Alterna di più tra legumi, pesce, uova, latticini e fonti vegetali, limitando la carne.",
+        dayOfWeek: targetMeal.dayOfWeek,
+        mealSlot: targetMeal.mealSlot
+      });
     }
 
     if (options.requireCompleteCoverage && returnedSlotKeys.size !== requestedSlotKeys.size) {
@@ -1323,6 +1402,14 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: lo slot deve contenere almeno una componente nel campo items.`;
         case "meal_missing_nutrition":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il pasto principale deve risultare completo con carboidrati, proteine e grassi buoni, distribuiti tra una o più componenti e dichiarati con nutritionTags.`;
+        case "protein_source_missing":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: se un item contiene proteine devi valorizzare anche proteinSource.`;
+        case "meat_limit_exceeded":
+          return "- La carne compare in troppi pasti principali: riducila ad al massimo 3 pasti nella settimana e sostituisci gli eccessi con altre fonti proteiche.";
+        case "meat_too_close":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: i pasti con carne sono troppo ravvicinati. Redistribuisci la carne nella settimana lasciando più distanza tra un'occasione e l'altra.`;
+        case "protein_variety_low":
+          return "- Le fonti proteiche sono poco varie: alterna maggiormente pesce, legumi, uova, latticini e fonti vegetali, limitando la carne.";
         case "unknown_recipe_id":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il recipeId di "${issue.recipeName}" non è valido. Usa una ricetta esistente corretta oppure trattala come nuova ricetta coerente.`;
         case "new_recipe_missing":
