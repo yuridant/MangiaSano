@@ -35,9 +35,7 @@ const aiPlannedWeekSchema = z.object({
       dayOfWeek: z.number().int().min(0).max(6),
       mealSlot: mealSlotSchema,
       items: z.array(
-        aiMealItemSchema.extend({
-          recipeId: z.undefined().optional()
-        })
+        aiMealItemSchema.omit({ recipeId: true })
       ).min(1)
     })
   )
