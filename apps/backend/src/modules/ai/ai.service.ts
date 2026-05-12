@@ -193,6 +193,8 @@ const MAX_AI_CORRECTION_ATTEMPTS = 3;
 const MAX_PROMPT_INPUT_TOKENS = 18000;
 const PROMPT_RECIPE_BUCKET_SHARE = 0.7;
 const PROMPT_RECIPE_BUCKET_SAMPLE_SHARE = 0.25;
+const DUPLICATE_NAME_SIMILARITY_THRESHOLD = 0.8;
+const DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD = 0.8;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -240,7 +242,7 @@ export class AiService {
       this.prisma.recipe.findMany({
         where: { familyId },
         include: {
-          ingredients: { include: { ingredient: { select: { name: true } } } }
+          ingredients: { include: { ingredient: { select: { name: true, category: true } } } }
         }
       }),
       this.prisma.ingredient.findMany({ where: { familyId } }),
@@ -429,7 +431,11 @@ export class AiService {
     const [existingRecipes, existingIngredients, generationLog] = await Promise.all([
       this.prisma.recipe.findMany({
         where: { familyId },
-        select: { id: true, name: true, mealTypes: true }
+        include: {
+          ingredients: {
+            include: { ingredient: { select: { id: true, name: true, category: true } } }
+          }
+        }
       }),
       this.prisma.ingredient.findMany({
         where: { familyId },
@@ -462,7 +468,11 @@ export class AiService {
         model: generationLog.model,
         initialResponseId: generationLog.openaiResponseId,
         initialResponse: responseToApply,
-        existingRecipes,
+        existingRecipes: existingRecipes.map((recipe) => ({
+          id: recipe.id,
+          name: recipe.name,
+          mealTypes: recipe.mealTypes
+        })),
         requestedSlots: normalizedSelectedSlots,
         requireCompleteCoverage: false,
         allowIncompatibleSlots: true,
@@ -477,7 +487,7 @@ export class AiService {
 
     const validation = this.inspectAiResponse(
       responseToApply,
-      existingRecipes,
+      existingRecipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
       normalizedSelectedSlots,
       { requireCompleteCoverage: false, allowIncompatibleSlots: true }
     );
@@ -601,6 +611,19 @@ export class AiService {
             .filter((value): value is string => Boolean(value))
         )];
         const inferredMealTypes = [...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set())];
+        const reusableRecipe = this.findReusableRecipe({
+          candidate: {
+            name: recipe.name,
+            mealTypes: recipe.mealTypes?.length ? recipe.mealTypes : inferredMealTypes,
+            ingredientNames: recipe.ingredients
+          },
+          existingRecipes
+        });
+
+        if (reusableRecipe) {
+          recipeIdsByName.set(normalizedRecipeName, reusableRecipe.id);
+          continue;
+        }
 
         const createdRecipe = await tx.recipe.create({
           data: {
@@ -648,18 +671,33 @@ export class AiService {
             const inferredMealTypes = [
               ...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>([meal.mealSlot]))
             ];
-            const createdRecipe = await tx.recipe.create({
-              data: {
-                name: item.recipeName.trim(),
-                description: item.recipeDescription?.trim() || null,
+            const reusableRecipe = this.findReusableRecipe({
+              candidate: {
+                name: item.recipeName,
                 mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
-                familyId,
-                createdById: userId
+                ingredientNames:
+                  recipesToCreateByName.get(normalizedRecipeName)?.ingredients ?? []
               },
-              select: { id: true, name: true }
+              existingRecipes
             });
-            recipeId = createdRecipe.id;
-            recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+
+            if (reusableRecipe) {
+              recipeId = reusableRecipe.id;
+              recipeIdsByName.set(normalizedRecipeName, reusableRecipe.id);
+            } else {
+              const createdRecipe = await tx.recipe.create({
+                data: {
+                  name: item.recipeName.trim(),
+                  description: item.recipeDescription?.trim() || null,
+                  mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
+                  familyId,
+                  createdById: userId
+                },
+                select: { id: true, name: true }
+              });
+              recipeId = createdRecipe.id;
+              recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+            }
           }
 
           finalItems.push({
@@ -888,7 +926,7 @@ export class AiService {
       description: string | null;
       mealTypes: MealSlot[];
       updatedAt: Date;
-      ingredients: { ingredient: { name: string } }[];
+      ingredients: { ingredient: { name: string; category: string | null } }[];
     }>,
     ingredients: Array<{ name: string; category: string | null }>,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
@@ -898,8 +936,9 @@ export class AiService {
       slotsDescription: string;
     }
   ) {
-    const requestedMealTypes = new Set(slots.map((slot) => slot.mealSlot));
-    const sortedIngredients = [...ingredients].sort((a, b) => a.name.localeCompare(b.name, "it"));
+    const ingredientCategoryByName = new Map(
+      ingredients.map((ingredient) => [this.normalizeRecipeName(ingredient.name), ingredient.category])
+    );
     const recipeSeed = `${meta.goal}|${meta.slotsDescription}|${meta.dietaryProfile.familyName}`;
 
     const strategies: Array<{
@@ -947,10 +986,11 @@ export class AiService {
           }
           return compactRecipe;
         }),
-        existingIngredients: sortedIngredients.slice(0, strategy.ingredientLimit).map((ingredient) => ({
-          name: ingredient.name,
-          category: ingredient.category
-        })),
+        existingIngredients: this.buildPromptIngredientsFromRecipes(
+          selectedRecipes,
+          ingredientCategoryByName,
+          strategy.ingredientLimit
+        ),
         recipeCountsByMealType: this.countRecipesByMealType(selectedRecipes),
         strategy
       };
@@ -982,6 +1022,35 @@ export class AiService {
     return chosenContext;
   }
 
+  private buildPromptIngredientsFromRecipes(
+    recipes: Array<{
+      ingredients: { ingredient: { name: string; category: string | null } }[];
+    }>,
+    ingredientCategoryByName: Map<string, string | null>,
+    ingredientLimit: number
+  ) {
+    const uniqueIngredients = new Map<string, PromptContextIngredient>();
+
+    for (const recipe of recipes) {
+      for (const recipeIngredient of recipe.ingredients) {
+        const name = recipeIngredient.ingredient.name;
+        const normalizedName = this.normalizeRecipeName(name);
+        if (uniqueIngredients.has(normalizedName)) continue;
+        uniqueIngredients.set(normalizedName, {
+          name,
+          category:
+            recipeIngredient.ingredient.category ??
+            ingredientCategoryByName.get(normalizedName) ??
+            null
+        });
+      }
+    }
+
+    return [...uniqueIngredients.values()]
+      .sort((a, b) => a.name.localeCompare(b.name, "it"))
+      .slice(0, ingredientLimit);
+  }
+
   private countRecipesByMealType(
     recipes: Array<{
       mealTypes: MealSlot[];
@@ -1003,7 +1072,7 @@ export class AiService {
       description: string | null;
       mealTypes: MealSlot[];
       updatedAt: Date;
-      ingredients: { ingredient: { name: string } }[];
+      ingredients: { ingredient: { name: string; category: string | null } }[];
     }>,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     recipeLimit: number,
@@ -1117,6 +1186,112 @@ export class AiService {
       hash = Math.imul(hash, 16777619);
     }
     return hash >>> 0;
+  }
+
+  private findReusableRecipe(params: {
+    candidate: {
+      name: string;
+      mealTypes: MealSlot[];
+      ingredientNames: string[];
+    };
+    existingRecipes: Array<{
+      id: string;
+      name: string;
+      mealTypes: MealSlot[];
+      ingredients: { ingredient: { name: string } }[];
+    }>;
+  }) {
+    const normalizedCandidateName = this.normalizeRecipeName(params.candidate.name);
+    const candidateIngredientNames = this.normalizeIngredientNames(params.candidate.ingredientNames);
+
+    for (const recipe of params.existingRecipes) {
+      const normalizedExistingName = this.normalizeRecipeName(recipe.name);
+      if (normalizedExistingName === normalizedCandidateName) {
+        return recipe;
+      }
+    }
+
+    const compatibleRecipes = params.existingRecipes.filter((recipe) =>
+      recipe.mealTypes.length === 0 ||
+      params.candidate.mealTypes.length === 0 ||
+      recipe.mealTypes.some((mealType) => params.candidate.mealTypes.includes(mealType))
+    );
+
+    let bestMatch: (typeof compatibleRecipes)[number] | null = null;
+    let bestScore = 0;
+
+    for (const recipe of compatibleRecipes) {
+      const nameSimilarity = this.computeNameSimilarity(normalizedCandidateName, this.normalizeRecipeName(recipe.name));
+      const existingIngredientNames = this.normalizeIngredientNames(
+        recipe.ingredients.map((recipeIngredient) => recipeIngredient.ingredient.name)
+      );
+      const ingredientOverlap = this.computeIngredientOverlap(candidateIngredientNames, existingIngredientNames);
+
+      if (
+        nameSimilarity >= DUPLICATE_NAME_SIMILARITY_THRESHOLD &&
+        ingredientOverlap >= DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD
+      ) {
+        const score = nameSimilarity + ingredientOverlap;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = recipe;
+        }
+      }
+    }
+
+    return bestMatch;
+  }
+
+  private normalizeIngredientNames(ingredientNames: string[]) {
+    return [...new Set(
+      ingredientNames
+        .map((ingredientName) => this.normalizeRecipeName(ingredientName))
+        .filter(Boolean)
+    )].sort();
+  }
+
+  private computeNameSimilarity(a: string, b: string) {
+    const aTokens = this.tokenizeRecipeLabel(a);
+    const bTokens = this.tokenizeRecipeLabel(b);
+    if (aTokens.length === 0 || bTokens.length === 0) return 0;
+    const intersection = aTokens.filter((token) => bTokens.includes(token)).length;
+    const union = new Set([...aTokens, ...bTokens]).size;
+    return union === 0 ? 0 : intersection / union;
+  }
+
+  private computeIngredientOverlap(a: string[], b: string[]) {
+    if (a.length === 0 || b.length === 0) return 0;
+    const intersection = a.filter((ingredientName) => b.includes(ingredientName)).length;
+    return intersection / Math.max(a.length, b.length);
+  }
+
+  private tokenizeRecipeLabel(value: string) {
+    return value
+      .split(/[^a-z0-9]+/i)
+      .map((token) => token.trim().toLowerCase())
+      .filter((token) => token.length > 2 && !this.isRecipeStopword(token));
+  }
+
+  private isRecipeStopword(token: string) {
+    return new Set([
+      "alla",
+      "allo",
+      "alle",
+      "agli",
+      "con",
+      "del",
+      "della",
+      "delle",
+      "degli",
+      "dei",
+      "di",
+      "al",
+      "ai",
+      "e",
+      "in",
+      "su",
+      "per"
+    ]).has(token);
   }
 
   private buildPromptSections(params: {
