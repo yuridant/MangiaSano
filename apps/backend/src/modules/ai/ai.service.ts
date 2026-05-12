@@ -192,6 +192,7 @@ interface AiValidationIssue {
     | "slot_missing"
     | "meal_missing_items"
     | "meal_missing_nutrition"
+    | "meal_redundant_components"
     | "protein_source_missing"
     | "meat_limit_exceeded"
     | "meat_too_close"
@@ -1316,6 +1317,8 @@ recipeDescription puo aiutare a chiarire la preparazione o l'idea nutrizionale.
 Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
 Quando un item contiene proteine valorizza anche proteinSource scegliendo tra meat, fish, legume, egg, dairy, plant_based, other.
 Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure piu componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
+Per pranzi e cene non proporre opzioni alternative nello stesso slot: ogni item deve essere una componente realmente consumata nello stesso pasto, non una possibilita tra cui scegliere.
+Per pranzi e cene limita di norma il pasto a 2 o 3 componenti totali e fai in modo che abbiano ruoli distinti: una base di carboidrati, una base proteica, un eventuale contorno vegetale. Evita di inserire due o piu componenti che coprono lo stesso ruolo principale, soprattutto due primi/cereali o due piatti proteici equivalenti nello stesso slot.
 Varia molto le fonti proteiche nell'arco della settimana.
 Evita la carne in piu di 3 pasti principali a settimana.
 Distribuisci gli eventuali pasti con carne lungo la settimana, evitando pasti con carne troppo ravvicinati e soprattutto evitando di concentrare la carne in giorni consecutivi o nello stesso giorno quando esistono alternative valide.
@@ -1650,6 +1653,7 @@ Se una ricetta candidata soddisfa bene lo slot, riusala compilando recipeId.
 Scegli preferibilmente tra le ricette candidate indicate per ogni componente. Crea una nuova ricetta solo quando nessuna candidata e adeguata oppure quando serve una variante davvero piu coerente con il piano astratto.
 Mantieni compatibilita con mealTypes delle ricette esistenti.
 Per ogni item mantieni coerenti nutritionTags e proteinSource con la struttura astratta.
+Ogni item deve rappresentare una scelta finale davvero consumata, non un'alternativa. Evita componenti ridondanti che coprono lo stesso ruolo principale nello stesso pasto, soprattutto due piatti a base di cereali/carboidrati o due portate proteiche equivalenti.
 Per ogni nuova ricetta inserisci la stessa voce anche in newRecipes con mealTypes coerenti e ingredienti realistici.
 In newIngredients inserisci solo ingredienti davvero nuovi rispetto al contesto candidato.
 Non aggiungere slot extra e non omettere slot richiesti per questo giorno.`
@@ -2735,6 +2739,25 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         if (proteinSources.has("meat")) {
           meatMeals.push({ dayOfWeek: meal.dayOfWeek, mealSlot: meal.mealSlot });
         }
+
+        const roleCounts = meal.items.reduce<Record<string, number>>((acc, item) => {
+          const primaryRole = this.getPrimaryMealRole(item);
+          if (!primaryRole) return acc;
+          acc[primaryRole] = (acc[primaryRole] ?? 0) + 1;
+          return acc;
+        }, {});
+        const overlappingRoles = Object.entries(roleCounts)
+          .filter(([role, count]) => count > 1 && role !== "vegetable" && role !== "fat")
+          .map(([role]) => role);
+
+        if (meal.items.length > 3 || overlappingRoles.length > 0) {
+          issues.push({
+            code: "meal_redundant_components",
+            message: `Lo slot ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} contiene componenti troppo sovrapposte o alternative tra loro. Mantieni solo componenti davvero complementari, con ruoli distinti tra carboidrati, proteine e contorno vegetale.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot
+          });
+        }
       }
     }
 
@@ -2923,6 +2946,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: lo slot deve contenere almeno una componente nel campo items.`;
         case "meal_missing_nutrition":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il pasto principale deve risultare completo con carboidrati, proteine e grassi buoni, distribuiti tra una o più componenti e dichiarati con nutritionTags.`;
+        case "meal_redundant_components":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: hai inserito componenti troppo sovrapposte o alternative nello stesso pasto. Mantieni solo componenti realmente complementari e con ruoli distinti, evitando due piatti che coprono lo stesso ruolo principale.`;
         case "protein_source_missing":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: se un item contiene proteine devi valorizzare anche proteinSource.`;
         case "meat_limit_exceeded":
@@ -3004,6 +3029,16 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private requiresCompleteMainMeal(mealSlot: MealSlot) {
     return mealSlot === "lunch" || mealSlot === "dinner";
+  }
+
+  private getPrimaryMealRole(item: AiResponse["weeklyPlan"][number]["items"][number]) {
+    const tags = new Set(item.nutritionTags ?? []);
+    if (tags.has("carb") && tags.has("protein")) return "single_dish";
+    if (tags.has("protein")) return "protein";
+    if (tags.has("carb")) return "carb";
+    if (tags.has("vegetable")) return "vegetable";
+    if (tags.has("fat")) return "fat";
+    return null;
   }
 
   private normalizeSlots(slots: { dayOfWeek: number; mealSlot: MealSlot }[]) {
