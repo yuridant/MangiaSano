@@ -172,6 +172,8 @@ interface ModelSelection {
 
 const MAX_AI_CORRECTION_ATTEMPTS = 3;
 const MAX_PROMPT_INPUT_TOKENS = 18000;
+const PROMPT_RECIPE_BUCKET_SHARE = 0.7;
+const PROMPT_RECIPE_BUCKET_SAMPLE_SHARE = 0.25;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -876,19 +878,8 @@ export class AiService {
     }
   ) {
     const requestedMealTypes = new Set(slots.map((slot) => slot.mealSlot));
-    const rankedRecipes = [...recipes]
-      .filter((recipe) => recipe.mealTypes.length === 0 || recipe.mealTypes.some((type) => requestedMealTypes.has(type)))
-      .sort((a, b) => {
-        const aMatches = a.mealTypes.filter((type) => requestedMealTypes.has(type)).length;
-        const bMatches = b.mealTypes.filter((type) => requestedMealTypes.has(type)).length;
-        if (aMatches !== bMatches) return bMatches - aMatches;
-        return b.updatedAt.getTime() - a.updatedAt.getTime();
-      });
-    const fallbackRecipes = [...recipes]
-      .filter((recipe) => !rankedRecipes.some((candidate) => candidate.id === recipe.id))
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-    const orderedRecipes = [...rankedRecipes, ...fallbackRecipes];
     const sortedIngredients = [...ingredients].sort((a, b) => a.name.localeCompare(b.name, "it"));
+    const recipeSeed = `${meta.goal}|${meta.slotsDescription}|${meta.dietaryProfile.familyName}`;
 
     const strategies: Array<{
       recipeLimit: number;
@@ -909,8 +900,14 @@ export class AiService {
     };
 
     for (const strategy of strategies) {
+      const selectedRecipes = this.selectPromptRecipes(
+        recipes,
+        slots,
+        strategy.recipeLimit,
+        recipeSeed
+      );
       const candidateContext = {
-        existingRecipes: orderedRecipes.slice(0, strategy.recipeLimit).map((recipe) => {
+        existingRecipes: selectedRecipes.map((recipe) => {
           const compactRecipe: PromptContextRecipe = {
             id: recipe.id,
             name: recipe.name,
@@ -957,6 +954,129 @@ export class AiService {
     }
 
     return chosenContext;
+  }
+
+  private selectPromptRecipes(
+    recipes: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      mealTypes: MealSlot[];
+      updatedAt: Date;
+      ingredients: { ingredient: { name: string } }[];
+    }>,
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    recipeLimit: number,
+    seed: string
+  ) {
+    const slotCounts = new Map<MealSlot, number>();
+    for (const slot of slots) {
+      slotCounts.set(slot.mealSlot, (slotCounts.get(slot.mealSlot) ?? 0) + 1);
+    }
+
+    const bucketedRecipes = new Map<MealSlot, typeof recipes>();
+    for (const mealSlot of [...slotCounts.keys()]) {
+      const bucket = recipes
+        .filter((recipe) => recipe.mealTypes.length === 0 || recipe.mealTypes.includes(mealSlot))
+        .sort((a, b) => this.comparePromptRecipes(a, b, mealSlot));
+      bucketedRecipes.set(mealSlot, bucket);
+    }
+
+    const selected = new Map<string, (typeof recipes)[number]>();
+    const requestedMealTypes = [...slotCounts.keys()];
+    const bucketBudget = Math.max(1, Math.floor(recipeLimit * PROMPT_RECIPE_BUCKET_SHARE));
+    const totalRequestedSlots = [...slotCounts.values()].reduce((sum, count) => sum + count, 0);
+
+    for (const mealSlot of requestedMealTypes) {
+      const bucket = bucketedRecipes.get(mealSlot) ?? [];
+      if (bucket.length === 0) continue;
+
+      const weight = (slotCounts.get(mealSlot) ?? 0) / Math.max(totalRequestedSlots, 1);
+      const target = Math.max(2, Math.round(bucketBudget * weight));
+      const deterministicCount = Math.max(1, Math.round(target * (1 - PROMPT_RECIPE_BUCKET_SAMPLE_SHARE)));
+      const sampleCount = Math.max(0, target - deterministicCount);
+
+      for (const recipe of bucket.slice(0, deterministicCount)) {
+        selected.set(recipe.id, recipe);
+      }
+
+      const remainingCandidates = bucket.filter((recipe) => !selected.has(recipe.id));
+      for (const recipe of this.sampleStableRecipes(remainingCandidates, sampleCount, `${seed}|${mealSlot}`)) {
+        selected.set(recipe.id, recipe);
+      }
+    }
+
+    const globallyRankedRecipes = [...recipes].sort((a, b) =>
+      this.comparePromptRecipes(a, b, undefined, requestedMealTypes)
+    );
+
+    for (const recipe of globallyRankedRecipes) {
+      if (selected.size >= recipeLimit) break;
+      selected.set(recipe.id, recipe);
+    }
+
+    return [...selected.values()].slice(0, recipeLimit);
+  }
+
+  private comparePromptRecipes(
+    a: {
+      name: string;
+      mealTypes: MealSlot[];
+      updatedAt: Date;
+      ingredients: { ingredient: { name: string } }[];
+    },
+    b: {
+      name: string;
+      mealTypes: MealSlot[];
+      updatedAt: Date;
+      ingredients: { ingredient: { name: string } }[];
+    },
+    targetMealSlot?: MealSlot,
+    requestedMealTypes: MealSlot[] = []
+  ) {
+    const aSpecificity = a.mealTypes.length === 0 ? 0 : 1;
+    const bSpecificity = b.mealTypes.length === 0 ? 0 : 1;
+    if (aSpecificity !== bSpecificity) return bSpecificity - aSpecificity;
+
+    if (targetMealSlot) {
+      const aMatchesTarget = a.mealTypes.includes(targetMealSlot) ? 1 : 0;
+      const bMatchesTarget = b.mealTypes.includes(targetMealSlot) ? 1 : 0;
+      if (aMatchesTarget !== bMatchesTarget) return bMatchesTarget - aMatchesTarget;
+    }
+
+    const aRequestedMatches = a.mealTypes.filter((type) => requestedMealTypes.includes(type)).length;
+    const bRequestedMatches = b.mealTypes.filter((type) => requestedMealTypes.includes(type)).length;
+    if (aRequestedMatches !== bRequestedMatches) return bRequestedMatches - aRequestedMatches;
+
+    const aIngredientCount = a.ingredients.length;
+    const bIngredientCount = b.ingredients.length;
+    if (aIngredientCount !== bIngredientCount) return bIngredientCount - aIngredientCount;
+
+    if (a.updatedAt.getTime() !== b.updatedAt.getTime()) {
+      return b.updatedAt.getTime() - a.updatedAt.getTime();
+    }
+
+    return a.name.localeCompare(b.name, "it");
+  }
+
+  private sampleStableRecipes<T extends { id: string }>(items: T[], count: number, seed: string) {
+    return [...items]
+      .map((item) => ({
+        item,
+        score: this.stableHash(`${seed}|${item.id}`)
+      }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, count)
+      .map((entry) => entry.item);
+  }
+
+  private stableHash(input: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
   }
 
   private buildPromptSections(params: {
