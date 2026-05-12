@@ -3,12 +3,14 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { MealSlot } from "../../common/meal-slots";
 import { FamiliesService } from "../families/families.service";
+import { RecipeSemanticsService } from "./recipe-semantics.service";
 
 @Injectable()
 export class RecipesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly families: FamiliesService
+    private readonly families: FamiliesService,
+    private readonly recipeSemantics: RecipeSemanticsService
   ) {}
 
   async list(userId: string, familyId: string) {
@@ -36,7 +38,7 @@ export class RecipesService {
     });
     if (existing) throw new ConflictException("Ricetta già esistente.");
 
-    return this.prisma.recipe.create({
+    const createdRecipe = await this.prisma.recipe.create({
       data: {
         name: data.name.trim(),
         description: data.description?.trim() || null,
@@ -53,6 +55,9 @@ export class RecipesService {
         }
       }
     });
+
+    await this.recipeSemantics.syncRecipeEmbedding(createdRecipe.id);
+    return createdRecipe;
   }
 
   async update(
@@ -71,7 +76,7 @@ export class RecipesService {
       if (existing && existing.id !== recipeId) throw new ConflictException("Nome già in uso.");
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const updatedRecipe = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (data.ingredientIds !== undefined) {
         await tx.recipeIngredient.deleteMany({ where: { recipeId } });
         await tx.recipeIngredient.createMany({
@@ -93,6 +98,9 @@ export class RecipesService {
         }
       });
     });
+
+    await this.recipeSemantics.syncRecipeEmbedding(recipeId);
+    return updatedRecipe;
   }
 
   async remove(userId: string, familyId: string, recipeId: string) {
@@ -137,6 +145,7 @@ export class RecipesService {
       createdIds.push(recipe.id);
     }
 
+    await this.recipeSemantics.syncRecipeEmbeddings(createdIds);
     return createdIds;
   }
 

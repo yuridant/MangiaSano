@@ -121,6 +121,10 @@ model Recipe {
   name        String
   description String?
   mealTypes   MealSlot[] @default([])
+  semanticText String?
+  embeddingModel String?
+  embeddingVector Float[] @default([])
+  embeddingUpdatedAt DateTime?
   familyId    String
   createdById String
   createdAt   DateTime  @default(now())

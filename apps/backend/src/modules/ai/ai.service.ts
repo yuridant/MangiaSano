@@ -17,6 +17,7 @@ import { z } from "zod";
 import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from "../../common/meal-slots";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FamiliesService } from "../families/families.service";
+import { RecipeSemanticsService } from "../recipes/recipe-semantics.service";
 
 const nutritionTagSchema = z.enum(["carb", "protein", "fat", "vegetable"]);
 const proteinSourceSchema = z.enum(["meat", "fish", "legume", "egg", "dairy", "plant_based", "other"]);
@@ -201,6 +202,7 @@ const PROMPT_RECIPE_BUCKET_SHARE = 0.7;
 const PROMPT_RECIPE_BUCKET_SAMPLE_SHARE = 0.25;
 const DUPLICATE_NAME_SIMILARITY_THRESHOLD = 0.8;
 const DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD = 0.8;
+const DUPLICATE_EMBEDDING_SIMILARITY_THRESHOLD = 0.94;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -222,7 +224,8 @@ export class AiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly families: FamiliesService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly recipeSemantics: RecipeSemanticsService
   ) {}
 
   async generate(
@@ -255,6 +258,7 @@ export class AiService {
       this.selectModelForRequest(familyId)
     ]);
     const model = modelSelection.model;
+    await this.recipeSemantics.ensureRecipeEmbeddings(recipes);
 
     const dietaryProfile = {
       familyName: family.name,
@@ -269,7 +273,7 @@ export class AiService {
       .map((slot) => `${dayNames[slot.dayOfWeek]} - ${MEAL_SLOT_LABELS[slot.mealSlot]}`)
       .join(", ");
 
-    const compactContext = this.buildCompactPromptContext(model, recipes, ingredients, slots, {
+    const compactContext = await this.buildCompactPromptContext(model, recipes, ingredients, slots, {
       goal,
       dietaryProfile,
       slotsDescription
@@ -463,6 +467,7 @@ export class AiService {
           })
         : Promise.resolve(null)
     ]);
+    await this.recipeSemantics.ensureRecipeEmbeddings(existingRecipes);
 
     let responseToApply: AiResponse = {
       ...response,
@@ -576,6 +581,23 @@ export class AiService {
       })
       .filter((recipe): recipe is NonNullable<typeof recipe> => Boolean(recipe));
 
+    const candidateRecipeEmbeddingByName = await this.buildCandidateRecipeEmbeddings([
+      ...recipesToCreate.map((recipe) => ({
+        name: recipe.name,
+        description: recipe.description,
+        mealTypes: recipe.mealTypes ?? [],
+        ingredientNames: recipe.ingredients
+      })),
+      ...normalizedResponse.weeklyPlan.flatMap((meal) =>
+        meal.items.map((item) => ({
+          name: item.recipeName,
+          description: item.recipeDescription,
+          mealTypes: [meal.mealSlot],
+          ingredientNames: recipesToCreateByName.get(this.normalizeRecipeName(item.recipeName))?.ingredients ?? []
+        }))
+      )
+    ]);
+
     for (const recipe of recipesToCreate) {
       for (const ingredientName of recipe.ingredients) {
         usedIngredientNames.add(this.normalizeRecipeName(ingredientName));
@@ -624,7 +646,8 @@ export class AiService {
           candidate: {
             name: recipe.name,
             mealTypes: recipe.mealTypes?.length ? recipe.mealTypes : inferredMealTypes,
-            ingredientNames: recipe.ingredients
+            ingredientNames: recipe.ingredients,
+            embedding: candidateRecipeEmbeddingByName.get(normalizedRecipeName)
           },
           existingRecipes
         });
@@ -691,7 +714,8 @@ export class AiService {
                 name: item.recipeName,
                 mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
                 ingredientNames:
-                  recipesToCreateByName.get(normalizedRecipeName)?.ingredients ?? []
+                  recipesToCreateByName.get(normalizedRecipeName)?.ingredients ?? [],
+                embedding: candidateRecipeEmbeddingByName.get(normalizedRecipeName)
               },
               existingRecipes
             });
@@ -962,13 +986,15 @@ export class AiService {
     }
   }
 
-  private buildCompactPromptContext(
+  private async buildCompactPromptContext(
     model: string,
     recipes: Array<{
       id: string;
       name: string;
       description: string | null;
       mealTypes: MealSlot[];
+      semanticText: string | null;
+      embeddingVector: number[];
       updatedAt: Date;
       ingredients: { ingredient: { name: string; category: string | null } }[];
     }>,
@@ -1006,11 +1032,12 @@ export class AiService {
     };
 
     for (const strategy of strategies) {
-      const selectedRecipes = this.selectPromptRecipes(
+      const selectedRecipes = await this.selectPromptRecipes(
         recipes,
         slots,
         strategy.recipeLimit,
-        recipeSeed
+        recipeSeed,
+        meta
       );
       const candidateContext = {
         existingRecipes: selectedRecipes.map((recipe) => {
@@ -1109,34 +1136,56 @@ export class AiService {
     return counts;
   }
 
-  private selectPromptRecipes(
+  private async selectPromptRecipes(
     recipes: Array<{
       id: string;
       name: string;
       description: string | null;
       mealTypes: MealSlot[];
+      semanticText: string | null;
+      embeddingVector: number[];
       updatedAt: Date;
       ingredients: { ingredient: { name: string; category: string | null } }[];
     }>,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     recipeLimit: number,
-    seed: string
+    seed: string,
+    meta: {
+      goal: string;
+      dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+      slotsDescription: string;
+    }
   ) {
     const slotCounts = new Map<MealSlot, number>();
     for (const slot of slots) {
       slotCounts.set(slot.mealSlot, (slotCounts.get(slot.mealSlot) ?? 0) + 1);
     }
-
+    const requestedMealTypes = [...slotCounts.keys()];
+    const queryTexts = requestedMealTypes.map((mealSlot) =>
+      [
+        `Tipo pasto: ${MEAL_SLOT_LABELS[mealSlot]}`,
+        `Obiettivo: ${meta.goal}`,
+        meta.dietaryProfile.preferences ? `Preferenze: ${meta.dietaryProfile.preferences}` : "",
+        meta.dietaryProfile.intolerances ? `Intolleranze: ${meta.dietaryProfile.intolerances}` : "",
+        meta.dietaryProfile.allergies ? `Allergie: ${meta.dietaryProfile.allergies}` : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    const queryEmbeddingValues = await this.recipeSemantics.embedQuery(queryTexts);
+    const queryEmbeddings = new Map<MealSlot, number[]>();
+    requestedMealTypes.forEach((mealSlot, index) => {
+      queryEmbeddings.set(mealSlot, queryEmbeddingValues[index] ?? []);
+    });
     const bucketedRecipes = new Map<MealSlot, typeof recipes>();
     for (const mealSlot of [...slotCounts.keys()]) {
       const bucket = recipes
         .filter((recipe) => recipe.mealTypes.length === 0 || recipe.mealTypes.includes(mealSlot))
-        .sort((a, b) => this.comparePromptRecipes(a, b, mealSlot));
+        .sort((a, b) => this.comparePromptRecipes(a, b, mealSlot, requestedMealTypes, queryEmbeddings.get(mealSlot)));
       bucketedRecipes.set(mealSlot, bucket);
     }
 
     const selected = new Map<string, (typeof recipes)[number]>();
-    const requestedMealTypes = [...slotCounts.keys()];
     const bucketBudget = Math.max(1, Math.floor(recipeLimit * PROMPT_RECIPE_BUCKET_SHARE));
     const totalRequestedSlots = [...slotCounts.values()].reduce((sum, count) => sum + count, 0);
 
@@ -1175,18 +1224,26 @@ export class AiService {
     a: {
       name: string;
       mealTypes: MealSlot[];
+      embeddingVector: number[];
       updatedAt: Date;
       ingredients: { ingredient: { name: string } }[];
     },
     b: {
       name: string;
       mealTypes: MealSlot[];
+      embeddingVector: number[];
       updatedAt: Date;
       ingredients: { ingredient: { name: string } }[];
     },
     targetMealSlot?: MealSlot,
-    requestedMealTypes: MealSlot[] = []
+    requestedMealTypes: MealSlot[] = [],
+    queryEmbedding?: number[]
   ) {
+    if (queryEmbedding) {
+      const aSimilarity = this.recipeSemantics.cosineSimilarity(a.embeddingVector ?? [], queryEmbedding);
+      const bSimilarity = this.recipeSemantics.cosineSimilarity(b.embeddingVector ?? [], queryEmbedding);
+      if (aSimilarity !== bSimilarity) return bSimilarity - aSimilarity;
+    }
     const aSpecificity = a.mealTypes.length === 0 ? 0 : 1;
     const bSpecificity = b.mealTypes.length === 0 ? 0 : 1;
     if (aSpecificity !== bSpecificity) return bSpecificity - aSpecificity;
@@ -1232,16 +1289,66 @@ export class AiService {
     return hash >>> 0;
   }
 
+  private async buildCandidateRecipeEmbeddings(
+    candidates: Array<{
+      name: string;
+      description?: string | null;
+      mealTypes: MealSlot[];
+      ingredientNames: string[];
+    }>
+  ) {
+    const uniqueCandidates = [...new Map(
+      candidates.map((candidate) => [
+        this.normalizeRecipeName(candidate.name),
+        candidate
+      ])
+    ).entries()];
+
+    if (uniqueCandidates.length === 0) return new Map<string, number[]>();
+
+    const embeddings = await this.recipeSemantics.embedQuery(
+      uniqueCandidates.map(([, candidate]) =>
+        this.buildRecipeSemanticTextForCandidate(candidate)
+      )
+    );
+
+    return new Map(
+      uniqueCandidates.map(([name], index) => [name, embeddings[index] ?? []])
+    );
+  }
+
+  private buildRecipeSemanticTextForCandidate(candidate: {
+    name: string;
+    description?: string | null;
+    mealTypes: MealSlot[];
+    ingredientNames: string[];
+  }) {
+    const ingredientSummary = [...candidate.ingredientNames]
+      .sort((a, b) => a.localeCompare(b, "it"))
+      .join(", ");
+
+    return [
+      `Nome: ${candidate.name}`,
+      candidate.description ? `Descrizione: ${candidate.description}` : "",
+      candidate.mealTypes.length > 0 ? `Pasti: ${candidate.mealTypes.join(", ")}` : "",
+      ingredientSummary ? `Ingredienti: ${ingredientSummary}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   private findReusableRecipe(params: {
     candidate: {
       name: string;
       mealTypes: MealSlot[];
       ingredientNames: string[];
+      embedding?: number[];
     };
     existingRecipes: Array<{
       id: string;
       name: string;
       mealTypes: MealSlot[];
+      embeddingVector?: number[];
       ingredients: { ingredient: { name: string } }[];
     }>;
   }) {
@@ -1270,12 +1377,22 @@ export class AiService {
         recipe.ingredients.map((recipeIngredient) => recipeIngredient.ingredient.name)
       );
       const ingredientOverlap = this.computeIngredientOverlap(candidateIngredientNames, existingIngredientNames);
+      const embeddingSimilarity =
+        params.candidate.embedding && recipe.embeddingVector
+          ? this.recipeSemantics.cosineSimilarity(params.candidate.embedding, recipe.embeddingVector)
+          : 0;
 
       if (
-        nameSimilarity >= DUPLICATE_NAME_SIMILARITY_THRESHOLD &&
-        ingredientOverlap >= DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD
+        (
+          nameSimilarity >= DUPLICATE_NAME_SIMILARITY_THRESHOLD &&
+          ingredientOverlap >= DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD
+        ) ||
+        (
+          embeddingSimilarity >= DUPLICATE_EMBEDDING_SIMILARITY_THRESHOLD &&
+          ingredientOverlap >= 0.5
+        )
       ) {
-        const score = nameSimilarity + ingredientOverlap;
+        const score = nameSimilarity + ingredientOverlap + embeddingSimilarity;
         if (score > bestScore) {
           bestScore = score;
           bestMatch = recipe;
