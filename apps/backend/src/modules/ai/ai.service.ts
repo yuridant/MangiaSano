@@ -108,6 +108,13 @@ interface RequestBreakdown {
     requestedMeals: number;
     existingRecipes: number;
     existingIngredients: number;
+    recipesByMealType?: Partial<Record<MealSlot, number>>;
+  };
+  contextStrategy?: {
+    recipeLimit: number;
+    ingredientLimit: number;
+    includeDescription: boolean;
+    ingredientNamesPerRecipe: number;
   };
 }
 
@@ -122,6 +129,18 @@ interface PromptContextRecipe {
 interface PromptContextIngredient {
   name: string;
   category?: string | null;
+}
+
+interface CompactPromptContext {
+  existingRecipes: PromptContextRecipe[];
+  existingIngredients: PromptContextIngredient[];
+  recipeCountsByMealType: Partial<Record<MealSlot, number>>;
+  strategy: {
+    recipeLimit: number;
+    ingredientLimit: number;
+    includeDescription: boolean;
+    ingredientNamesPerRecipe: number;
+  };
 }
 
 type OpenAiExperimentMode = "off" | "alternate" | "random";
@@ -269,8 +288,10 @@ export class AiService {
     }, {
       requestedMeals: slots.length,
       existingRecipes: compactContext.existingRecipes.length,
-      existingIngredients: compactContext.existingIngredients.length
+      existingIngredients: compactContext.existingIngredients.length,
+      recipesByMealType: compactContext.recipeCountsByMealType
     });
+    requestBreakdown.contextStrategy = compactContext.strategy;
 
     try {
       const initialResponse = await this.getClient().responses.parse({
@@ -894,9 +915,11 @@ export class AiService {
       { recipeLimit: 30, ingredientLimit: 50, includeDescription: false, ingredientNamesPerRecipe: 0 }
     ];
 
-    let chosenContext = {
+    let chosenContext: CompactPromptContext = {
       existingRecipes: [] as PromptContextRecipe[],
-      existingIngredients: [] as PromptContextIngredient[]
+      existingIngredients: [] as PromptContextIngredient[],
+      recipeCountsByMealType: {},
+      strategy: strategies[strategies.length - 1]
     };
 
     for (const strategy of strategies) {
@@ -927,7 +950,9 @@ export class AiService {
         existingIngredients: sortedIngredients.slice(0, strategy.ingredientLimit).map((ingredient) => ({
           name: ingredient.name,
           category: ingredient.category
-        }))
+        })),
+        recipeCountsByMealType: this.countRecipesByMealType(selectedRecipes),
+        strategy
       };
 
       const candidateSections = this.buildPromptSections({
@@ -944,7 +969,8 @@ export class AiService {
       }, {
         requestedMeals: slots.length,
         existingRecipes: candidateContext.existingRecipes.length,
-        existingIngredients: candidateContext.existingIngredients.length
+        existingIngredients: candidateContext.existingIngredients.length,
+        recipesByMealType: candidateContext.recipeCountsByMealType
       });
 
       chosenContext = candidateContext;
@@ -954,6 +980,20 @@ export class AiService {
     }
 
     return chosenContext;
+  }
+
+  private countRecipesByMealType(
+    recipes: Array<{
+      mealTypes: MealSlot[];
+    }>
+  ) {
+    const counts: Partial<Record<MealSlot, number>> = {};
+    for (const recipe of recipes) {
+      for (const mealType of recipe.mealTypes) {
+        counts[mealType] = (counts[mealType] ?? 0) + 1;
+      }
+    }
+    return counts;
   }
 
   private selectPromptRecipes(
