@@ -92,6 +92,25 @@ export interface AiGenerateResult {
   result: AiResponse;
 }
 
+type AiGenerationJobStatus =
+  | "pending"
+  | "planning"
+  | "retrieving"
+  | "filling"
+  | "validating"
+  | "completed"
+  | "failed";
+
+interface AiGenerationJobState {
+  status: AiGenerationJobStatus;
+  phase: string;
+  message: string;
+  dayOfWeek?: number;
+  completedDays?: number;
+  totalDays?: number;
+  updatedAt: string;
+}
+
 const DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06";
 const MODEL_PRICING_USD_PER_1M: Record<string, { input: number; cachedInput: number; output: number }> = {
   "gpt-4o-2024-08-06": {
@@ -273,6 +292,104 @@ export class AiService {
     weekStart: string,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     goal: string
+  ) {
+    await this.families.requireMembership(userId, familyId);
+    const generationId = await this.createPendingGenerationLog({
+      userId,
+      familyId,
+      weekStart,
+      requestedMealCount: this.normalizeSlots(slots).length
+    });
+
+    void this.runGenerationJob({
+      generationId,
+      userId,
+      familyId,
+      weekStart,
+      slots,
+      goal
+    });
+
+    return {
+      generationId,
+      status: "pending" as const,
+      message: "Coda avviata. Sto preparando la pianificazione settimanale."
+    };
+  }
+
+  async getGenerationStatus(userId: string, familyId: string, generationId: string) {
+    await this.families.requireMembership(userId, familyId);
+
+    const log = await this.prisma.aiGenerationLog.findFirst({
+      where: { id: generationId, userId, familyId },
+      select: {
+        id: true,
+        model: true,
+        success: true,
+        errorMessage: true,
+        responseBreakdown: true
+      }
+    });
+    if (!log) {
+      throw new BadRequestException("Generazione AI non trovata.");
+    }
+
+    const responseBreakdown =
+      log.responseBreakdown && typeof log.responseBreakdown === "object" && !Array.isArray(log.responseBreakdown)
+        ? (log.responseBreakdown as Record<string, unknown>)
+        : {};
+    const job = this.readJobState(responseBreakdown);
+    const finalPayload = responseBreakdown.generatedPayload as Record<string, unknown> | undefined;
+
+    return {
+      generationId: log.id,
+      model: log.model,
+      status: job?.status ?? (log.success ? "completed" : log.errorMessage ? "failed" : "pending"),
+      phase: job?.phase ?? null,
+      message: job?.message ?? (log.success ? "Generazione completata." : "Generazione in corso."),
+      errorMessage: log.errorMessage,
+      result: finalPayload?.result ?? null,
+      correctionSummary: finalPayload?.correctionSummary ?? null,
+      validationIssues: finalPayload?.validationIssues ?? [],
+      experimentVariant: finalPayload?.experimentVariant ?? "primary",
+      experimentStrategy: finalPayload?.experimentStrategy ?? "off"
+    };
+  }
+
+  private async runGenerationJob(params: {
+    userId: string,
+    familyId: string,
+    weekStart: string,
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    goal: string
+    generationId: string;
+  }) {
+    try {
+      await this.executeGeneration(
+        params.userId,
+        params.familyId,
+        params.weekStart,
+        params.slots,
+        params.goal,
+        params.generationId
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Errore imprevisto";
+      await this.updateGenerationJobState(params.generationId, {
+        status: "failed",
+        phase: "failed",
+        message
+      }, message);
+    }
+  }
+
+  private async executeGeneration(
+    userId: string,
+    familyId: string,
+    weekStart: string,
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    goal: string,
+    existingGenerationId?: string
   ): Promise<AiGenerateResult> {
     await this.families.requireMembership(userId, familyId);
     const startedAt = Date.now();
@@ -334,6 +451,14 @@ export class AiService {
     });
 
     try {
+      if (existingGenerationId) {
+        await this.updateGenerationJobState(existingGenerationId, {
+          status: "planning",
+          phase: "planner_started",
+          message: "Sto costruendo la struttura nutrizionale della settimana."
+        });
+      }
+
       const plannerPhase = await this.parseStructuredResponseWithRetry({
         model,
         instructions: SYSTEM_PROMPT,
@@ -349,6 +474,14 @@ export class AiService {
         initialResponse: plannerPhase.parsed,
         requestedSlots: normalizedSlots
       });
+
+      if (existingGenerationId) {
+        await this.updateGenerationJobState(existingGenerationId, {
+          status: "retrieving",
+          phase: "retrieval_started",
+          message: "Sto cercando le ricette piu adatte dal ricettario esistente."
+        });
+      }
 
       const dayContexts = await this.buildDayFillContexts({
         model,
@@ -366,7 +499,18 @@ export class AiService {
       };
       const phaseUsages: UsageTotals[] = [plannerPhase.usage, ...plannerValidation.correctionUsages];
 
-      for (const dayContext of dayContexts) {
+      for (const [dayIndex, dayContext] of dayContexts.entries()) {
+        if (existingGenerationId) {
+          await this.updateGenerationJobState(existingGenerationId, {
+            status: "filling",
+            phase: `filling_day_${dayContext.dayOfWeek}`,
+            message: `Sto completando le ricette per ${dayNames[dayContext.dayOfWeek]}.`,
+            dayOfWeek: dayContext.dayOfWeek,
+            completedDays: dayIndex,
+            totalDays: dayContexts.length
+          });
+        }
+
         const dayFill = await this.fillPlannedDay({
           model,
           goal,
@@ -388,6 +532,14 @@ export class AiService {
       const correctionUsages: UsageTotals[] = [...plannerValidation.correctionUsages];
       let validationIssues: AiGenerateResult["validationIssues"] = [];
       let openaiResponseId: string | undefined;
+
+      if (existingGenerationId) {
+        await this.updateGenerationJobState(existingGenerationId, {
+          status: "validating",
+          phase: "final_validation",
+          message: "Sto verificando coerenza finale, copertura degli slot e regole nutrizionali."
+        });
+      }
 
       const finalValidation = this.inspectAiResponse(
         combinedResult,
@@ -420,7 +572,7 @@ export class AiService {
         finalResponse = finalValidation.result;
       }
 
-      const generationId = await this.logGeneration({
+      const generationId = await this.persistGenerationLog(existingGenerationId, {
         userId,
         familyId,
         weekStart,
@@ -453,6 +605,16 @@ export class AiService {
         latencyMs: Date.now() - startedAt,
         openaiResponseId
       });
+      if (generationId) {
+        await this.attachCompletedGenerationPayload(generationId, {
+          model,
+          experimentVariant: modelSelection.variant,
+          experimentStrategy: modelSelection.strategy,
+          correctionSummary,
+          validationIssues,
+          result: finalResponse
+        });
+      }
       return {
         generationId,
         model,
@@ -465,7 +627,7 @@ export class AiService {
     } catch (error) {
       const failureBreakdown = this.buildFailureBreakdown(error, requestBreakdown);
 
-      await this.logGeneration({
+      const generationId = await this.persistGenerationLog(existingGenerationId, {
         userId,
         familyId,
         weekStart,
@@ -481,6 +643,13 @@ export class AiService {
         latencyMs: Date.now() - startedAt,
         errorMessage: error instanceof Error ? error.message : "Errore imprevisto"
       });
+      if (generationId) {
+        await this.updateGenerationJobState(generationId, {
+          status: "failed",
+          phase: "failed",
+          message: error instanceof Error ? error.message : "Errore imprevisto"
+        }, error instanceof Error ? error.message : "Errore imprevisto");
+      }
 
       if (error instanceof BadRequestException) throw error;
 
@@ -1491,6 +1660,194 @@ Non aggiungere slot extra e non omettere slot richiesti per questo giorno.`
 
   private sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async createPendingGenerationLog(params: {
+    userId: string;
+    familyId: string;
+    weekStart: string;
+    requestedMealCount: number;
+  }) {
+    const created = await this.prisma.aiGenerationLog.create({
+      data: {
+        userId: params.userId,
+        familyId: params.familyId,
+        weekStart: this.parseWeekStart(params.weekStart),
+        model: this.getBaseModelConfig().primaryModel,
+        requestedMealCount: params.requestedMealCount,
+        existingRecipeCount: 0,
+        existingIngredientCount: 0,
+        success: false,
+        responseBreakdown: {
+          job: {
+            status: "pending",
+            phase: "queued",
+            message: "Coda avviata. Sto preparando la pianificazione settimanale.",
+            updatedAt: new Date().toISOString()
+          }
+        } as Prisma.InputJsonValue
+      },
+      select: { id: true }
+    });
+
+    return created.id;
+  }
+
+  private async updateGenerationJobState(
+    generationId: string,
+    jobState: Omit<AiGenerationJobState, "updatedAt">,
+    errorMessage?: string | null
+  ) {
+    const current = await this.prisma.aiGenerationLog.findUnique({
+      where: { id: generationId },
+      select: { responseBreakdown: true }
+    });
+    const existingBreakdown =
+      current?.responseBreakdown &&
+      typeof current.responseBreakdown === "object" &&
+      !Array.isArray(current.responseBreakdown)
+        ? (current.responseBreakdown as Record<string, unknown>)
+        : {};
+
+    await this.prisma.aiGenerationLog.update({
+      where: { id: generationId },
+      data: {
+        errorMessage: errorMessage ?? undefined,
+        responseBreakdown: {
+          ...existingBreakdown,
+          job: {
+            ...jobState,
+            updatedAt: new Date().toISOString()
+          }
+        } as Prisma.InputJsonValue
+      }
+    });
+  }
+
+  private async attachCompletedGenerationPayload(
+    generationId: string,
+    payload: Omit<AiGenerateResult, "generationId">
+  ) {
+    const current = await this.prisma.aiGenerationLog.findUnique({
+      where: { id: generationId },
+      select: { responseBreakdown: true }
+    });
+    const existingBreakdown =
+      current?.responseBreakdown &&
+      typeof current.responseBreakdown === "object" &&
+      !Array.isArray(current.responseBreakdown)
+        ? (current.responseBreakdown as Record<string, unknown>)
+        : {};
+
+    await this.prisma.aiGenerationLog.update({
+      where: { id: generationId },
+      data: {
+        responseBreakdown: {
+          ...existingBreakdown,
+          job: {
+            status: "completed",
+            phase: "completed",
+            message: "Generazione completata. Il piano e pronto per l'anteprima.",
+            updatedAt: new Date().toISOString()
+          },
+          generatedPayload: payload
+        } as Prisma.InputJsonValue
+      }
+    });
+  }
+
+  private readJobState(responseBreakdown: Record<string, unknown>) {
+    const job = responseBreakdown.job;
+    if (!job || typeof job !== "object" || Array.isArray(job)) return null;
+    return job as AiGenerationJobState;
+  }
+
+  private async persistGenerationLog(
+    existingGenerationId: string | undefined,
+    params: {
+      userId: string;
+      familyId: string;
+      weekStart: string;
+      model: string;
+      strategy: OpenAiExperimentMode;
+      variant: "primary" | "secondary";
+      requestedMealCount: number;
+      existingRecipeCount: number;
+      existingIngredientCount: number;
+      requestBreakdown: RequestBreakdown;
+      responseBreakdown?: Record<string, unknown>;
+      usageTotals?: UsageTotals;
+      success: boolean;
+      latencyMs: number;
+      openaiResponseId?: string;
+      errorMessage?: string;
+    }
+  ) {
+    if (!existingGenerationId) {
+      return this.logGeneration(params);
+    }
+
+    const pricing = this.getPricingForModel(params.model);
+    const inputTokens = params.usageTotals?.inputTokens ?? null;
+    const cachedInputTokens = params.usageTotals?.cachedInputTokens ?? 0;
+    const outputTokens = params.usageTotals?.outputTokens ?? null;
+    const billableInputTokens = inputTokens === null ? null : Math.max(inputTokens - cachedInputTokens, 0);
+    const estimatedInputCostUsd =
+      billableInputTokens === null
+        ? null
+        : Number((((billableInputTokens / 1_000_000) * pricing.input) + ((cachedInputTokens / 1_000_000) * pricing.cachedInput)).toFixed(6));
+    const estimatedOutputCostUsd =
+      outputTokens === null ? null : Number((((outputTokens / 1_000_000) * pricing.output)).toFixed(6));
+    const estimatedTotalCostUsd =
+      estimatedInputCostUsd === null || estimatedOutputCostUsd === null
+        ? null
+        : Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6));
+
+    const current = await this.prisma.aiGenerationLog.findUnique({
+      where: { id: existingGenerationId },
+      select: { responseBreakdown: true }
+    });
+    const existingBreakdown =
+      current?.responseBreakdown &&
+      typeof current.responseBreakdown === "object" &&
+      !Array.isArray(current.responseBreakdown)
+        ? (current.responseBreakdown as Record<string, unknown>)
+        : {};
+
+    await this.prisma.aiGenerationLog.update({
+      where: { id: existingGenerationId },
+      data: {
+        model: params.model,
+        success: params.success,
+        weekStart: this.parseWeekStart(params.weekStart),
+        requestedMealCount: params.requestedMealCount,
+        existingRecipeCount: params.existingRecipeCount,
+        existingIngredientCount: params.existingIngredientCount,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        totalTokens: params.usageTotals?.totalTokens ?? null,
+        estimatedInputCostUsd,
+        estimatedOutputCostUsd,
+        estimatedTotalCostUsd,
+        latencyMs: params.latencyMs,
+        openaiResponseId: params.openaiResponseId,
+        errorMessage: params.errorMessage,
+        requestBreakdown: {
+          ...(params.requestBreakdown as unknown as Record<string, unknown>),
+          experiment: {
+            strategy: params.strategy,
+            variant: params.variant
+          }
+        } as Prisma.InputJsonValue,
+        responseBreakdown: {
+          ...existingBreakdown,
+          ...(params.responseBreakdown ?? {})
+        } as Prisma.InputJsonValue
+      }
+    });
+
+    return existingGenerationId;
   }
 
   private async buildCompactPromptContext(

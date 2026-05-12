@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { mealSlotSchema } from "../../common/meal-slots";
@@ -46,6 +46,15 @@ export class AiController {
   generate(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
     const { weekStart, slots, goal } = generateSchema.parse(body);
     return this.aiService.generate(req.user.id, familyId, weekStart, slots, goal);
+  }
+
+  @Get("generate/:generationId")
+  getGenerationStatus(
+    @Req() req: AuthedRequest,
+    @Query("familyId") familyId: string,
+    @Param("generationId") generationId: string
+  ) {
+    return this.aiService.getGenerationStatus(req.user.id, familyId, generationId);
   }
 
   @Post("apply")

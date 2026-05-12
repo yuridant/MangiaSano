@@ -9,6 +9,8 @@ import { formatDateKey, formatWeekRange, getMonday } from "../lib/week";
 import type {
   AiFeedbackRating,
   AiGenerateResult,
+  AiGenerationStartResponse,
+  AiGenerationStatusResponse,
   AiMealPlan,
   AiResponse,
   FamilyDetail,
@@ -66,7 +68,7 @@ export function GeneratePage() {
   const [selectedFeedback, setSelectedFeedback] = useState<AiFeedbackRating | null>(null);
   const [submittedFeedback, setSubmittedFeedback] = useState<AiFeedbackRating | null>(null);
   const [validationIssues, setValidationIssues] = useState<AiGenerateResult["validationIssues"]>([]);
-  const [progressMessageIndex, setProgressMessageIndex] = useState(0);
+  const [generationStatus, setGenerationStatus] = useState<AiGenerationStatusResponse | null>(null);
 
   const requestedWeekStart = searchParams.get("weekStart");
   const parsedWeekStart =
@@ -97,7 +99,7 @@ export function GeneratePage() {
     setSelectedFeedback(null);
     setSubmittedFeedback(null);
     setValidationIssues([]);
-    setProgressMessageIndex(0);
+    setGenerationStatus(null);
   }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
@@ -176,7 +178,7 @@ export function GeneratePage() {
 
   const generateMutation = useMutation({
     mutationFn: () =>
-      api.post<AiGenerateResult>(
+      api.post<AiGenerationStartResponse>(
         `/ai/generate?familyId=${activeFamilyId}`,
         {
           weekStart,
@@ -186,6 +188,53 @@ export function GeneratePage() {
         token!
       ),
     onSuccess: (data) => {
+      setAiResult(null);
+      setGenerationMeta(null);
+      setPlanToSave([]);
+      setSelectedFeedback(null);
+      setSubmittedFeedback(null);
+      setValidationIssues([]);
+      setGenerationStatus({
+        generationId: data.generationId,
+        model: "",
+        status: data.status,
+        phase: "queued",
+        message: data.message,
+        errorMessage: null,
+        result: null,
+        correctionSummary: null,
+        validationIssues: [],
+        experimentVariant: "primary",
+        experimentStrategy: "off"
+      });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Errore durante la generazione");
+    }
+  });
+
+  const generationStatusQuery = useQuery({
+    queryKey: ["ai-generation-status", activeFamilyId, generationStatus?.generationId],
+    queryFn: () =>
+      api.get<AiGenerationStatusResponse>(
+        `/ai/generate/${generationStatus?.generationId}?familyId=${activeFamilyId}`,
+        token!
+      ),
+    enabled: !!token && !!activeFamilyId && !!generationStatus?.generationId && step === "select",
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 1200;
+      return data.status === "completed" || data.status === "failed" ? false : 1200;
+    }
+  });
+
+  useEffect(() => {
+    const data = generationStatusQuery.data;
+    if (!data) return;
+
+    setGenerationStatus(data);
+
+    if (data.status === "completed" && data.result && data.correctionSummary) {
       setAiResult(data.result);
       setGenerationMeta({
         generationId: data.generationId,
@@ -199,22 +248,14 @@ export function GeneratePage() {
       setSelectedFeedback(null);
       setSubmittedFeedback(null);
       setStep("preview");
-    },
-    onError: (err) => {
-      setError(err instanceof Error ? err.message : "Errore durante la generazione");
+      setError("");
     }
-  });
 
-  useEffect(() => {
-    if (!generateMutation.isPending) {
-      setProgressMessageIndex(0);
-      return;
+    if (data.status === "failed") {
+      setError(data.errorMessage || data.message || "Errore durante la generazione");
+      setGenerationStatus(null);
     }
-    const interval = window.setInterval(() => {
-      setProgressMessageIndex((current) => (current + 1) % GENERATION_PROGRESS_MESSAGES.length);
-    }, 1800);
-    return () => window.clearInterval(interval);
-  }, [generateMutation.isPending]);
+  }, [generationStatusQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -436,6 +477,7 @@ export function GeneratePage() {
               setValidationIssues([]);
               setSelectedFeedback(null);
               setSubmittedFeedback(null);
+              setGenerationStatus(null);
             }}
             className="app-btn app-btn-secondary flex-1"
             type="button"
@@ -607,11 +649,15 @@ export function GeneratePage() {
         <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
       )}
 
-      {generateMutation.isPending && (
+      {(generateMutation.isPending || generationStatusQuery.isFetching || (generationStatus && step === "select" && !aiResult)) && (
         <div className="rounded-2xl bg-sky-50 px-4 py-4 text-sm text-sky-900">
-          <p className="font-semibold">{GENERATION_PROGRESS_MESSAGES[progressMessageIndex]}</p>
+          <p className="font-semibold">
+            {generationStatus?.message ?? "Sto avviando la generazione del menu settimanale."}
+          </p>
           <p className="mt-1 text-sky-800">
-            Se emergono pasti incompatibili, proveremo a farli correggere automaticamente all&apos;AI nella stessa conversazione.
+            {generationStatus?.phase
+              ? `Fase attuale: ${formatGenerationPhase(generationStatus.phase)}.`
+              : "La pagina si aggiorna automaticamente seguendo gli step reali del backend."}
           </p>
         </div>
       )}
@@ -625,10 +671,10 @@ export function GeneratePage() {
       <button
         type="button"
         onClick={startGeneration}
-        disabled={selectedSlots.length === 0 || generateMutation.isPending || !goal.trim()}
+        disabled={selectedSlots.length === 0 || generateMutation.isPending || !!generationStatus || !goal.trim()}
         className="app-btn app-btn-sage w-full disabled:opacity-60"
       >
-        {generateMutation.isPending ? "Generazione in corso..." : "🤖 Genera con AI"}
+        {generateMutation.isPending || generationStatus ? "Generazione in corso..." : "🤖 Genera con AI"}
       </button>
 
       {overwriteWarningOpen && (
@@ -689,8 +735,20 @@ export function GeneratePage() {
   );
 }
 
-const GENERATION_PROGRESS_MESSAGES = [
-  "L'AI sta preparando la prima proposta del piano.",
-  "Sto controllando che ogni ricetta sia coerente con il tipo di pasto.",
-  "Se serve, sto chiedendo all'AI di correggere solo gli slot problematici."
-];
+function formatGenerationPhase(phase: string) {
+  const labels: Record<string, string> = {
+    queued: "In coda",
+    planner_started: "Pianificazione settimanale",
+    retrieval_started: "Ricerca ricette candidate",
+    final_validation: "Validazione finale",
+    completed: "Completata",
+    failed: "Errore"
+  };
+
+  if (phase.startsWith("filling_day_")) {
+    const dayOfWeek = Number(phase.replace("filling_day_", ""));
+    return Number.isNaN(dayOfWeek) ? "Completamento ricette" : `Completamento ricette per ${DAYS_FULL[dayOfWeek]}`;
+  }
+
+  return labels[phase] ?? phase;
+}

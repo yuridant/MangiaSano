@@ -153,6 +153,26 @@ export interface AiGenerateResult {
   result: AiResponse;
 }
 
+export interface AiGenerationStartResponse {
+  generationId: string;
+  status: "pending";
+  message: string;
+}
+
+export interface AiGenerationStatusResponse {
+  generationId: string;
+  model: string;
+  status: "pending" | "planning" | "retrieving" | "filling" | "validating" | "completed" | "failed";
+  phase: string | null;
+  message: string;
+  errorMessage: string | null;
+  result: AiResponse | null;
+  correctionSummary: AiGenerateResult["correctionSummary"] | null;
+  validationIssues: AiGenerateResult["validationIssues"];
+  experimentVariant: "primary" | "secondary";
+  experimentStrategy: "off" | "alternate" | "random";
+}
+
 export interface AnalyticsSummary {
   overview: {
     totalMenus: number;
