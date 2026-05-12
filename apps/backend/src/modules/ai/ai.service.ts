@@ -29,6 +29,20 @@ const aiMealItemSchema = z.object({
   proteinSource: proteinSourceSchema.optional()
 });
 
+const aiPlannedWeekSchema = z.object({
+  weeklyPlan: z.array(
+    z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      mealSlot: mealSlotSchema,
+      items: z.array(
+        aiMealItemSchema.extend({
+          recipeId: z.undefined().optional()
+        })
+      ).min(1)
+    })
+  )
+});
+
 export const aiResponseSchema = z.object({
   weeklyPlan: z.array(
     z.object({
@@ -54,6 +68,7 @@ export const aiResponseSchema = z.object({
 });
 
 export type AiResponse = z.infer<typeof aiResponseSchema>;
+type AiPlannedWeek = z.infer<typeof aiPlannedWeekSchema>;
 export type AiFeedbackRating = "excellent" | "acceptable" | "poor";
 
 export interface AiGenerateResult {
@@ -181,13 +196,35 @@ interface AiCorrectionResolution {
   issues: AiValidationIssue[];
   notes: string[];
   correctionUsages: UsageTotals[];
-  lastResponseId: string;
+  lastResponseId: string | null;
 }
 
 interface AiRecipeResolutionStats {
   reusedExistingRecipes: number;
   createdNewRecipes: number;
   absorbedDuplicateRecipes: number;
+}
+
+interface DayFillCandidateReference {
+  itemIndex: number;
+  candidateRecipeIds: string[];
+}
+
+interface DayFillContext {
+  dayOfWeek: number;
+  meals: AiPlannedWeek["weeklyPlan"];
+  existingRecipes: PromptContextRecipe[];
+  existingIngredients: PromptContextIngredient[];
+  candidateRefs: Array<{
+    mealSlot: MealSlot;
+    items: DayFillCandidateReference[];
+  }>;
+}
+
+interface PhaseGenerationResult<T> {
+  parsed: T;
+  responseId: string | null;
+  usage: UsageTotals;
 }
 
 interface ModelSelection {
@@ -197,12 +234,14 @@ interface ModelSelection {
 }
 
 const MAX_AI_CORRECTION_ATTEMPTS = 3;
+const MAX_RATE_LIMIT_RETRIES = 3;
 const MAX_PROMPT_INPUT_TOKENS = 9000;
 const PROMPT_RECIPE_BUCKET_SHARE = 0.7;
 const PROMPT_RECIPE_BUCKET_SAMPLE_SHARE = 0.25;
 const DUPLICATE_NAME_SIMILARITY_THRESHOLD = 0.8;
 const DUPLICATE_INGREDIENT_OVERLAP_THRESHOLD = 0.8;
 const DUPLICATE_EMBEDDING_SIMILARITY_THRESHOLD = 0.94;
+const DAY_FILL_RECIPE_LIMIT_PER_ITEM = 4;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -237,6 +276,7 @@ export class AiService {
   ): Promise<AiGenerateResult> {
     await this.families.requireMembership(userId, familyId);
     const startedAt = Date.now();
+    const normalizedSlots = this.normalizeSlots(slots);
 
     const [family, recipes, ingredients, modelSelection] = await Promise.all([
       this.prisma.family.findUniqueOrThrow({
@@ -272,63 +312,114 @@ export class AiService {
     const slotsDescription = slots
       .map((slot) => `${dayNames[slot.dayOfWeek]} - ${MEAL_SLOT_LABELS[slot.mealSlot]}`)
       .join(", ");
-
-    const compactContext = await this.buildCompactPromptContext(model, recipes, ingredients, slots, {
+    const plannerSections = this.buildWeeklyPlannerPromptSections({
       goal,
-      dietaryProfile,
-      slotsDescription
-    });
-    const promptSections = this.buildPromptSections({
-      goal,
-      existingRecipes: compactContext.existingRecipes,
-      existingIngredients: compactContext.existingIngredients,
       dietaryProfile,
       slotsDescription,
-      slots
+      slots: normalizedSlots
     });
-    const userMessage = [
-      promptSections.goal,
-      promptSections.existingRecipes,
-      promptSections.existingIngredients,
-      promptSections.dietaryProfile,
-      promptSections.requestedSlots,
-      promptSections.rules
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const plannerMessage = [
+      plannerSections.goal,
+      plannerSections.dietaryProfile,
+      plannerSections.requestedSlots,
+      plannerSections.rules
+    ].join("\n\n");
     const requestBreakdown = this.buildRequestBreakdown(model, {
       systemPrompt: SYSTEM_PROMPT,
-      ...promptSections
+      ...plannerSections
     }, {
-      requestedMeals: slots.length,
-      existingRecipes: compactContext.existingRecipes.length,
-      existingIngredients: compactContext.existingIngredients.length,
-      recipesByMealType: compactContext.recipeCountsByMealType
+      requestedMeals: normalizedSlots.length,
+      existingRecipes: 0,
+      existingIngredients: 0
     });
-    requestBreakdown.contextStrategy = compactContext.strategy;
 
     try {
-      const initialResponse = await this.getClient().responses.parse({
+      const plannerPhase = await this.parseStructuredResponseWithRetry({
         model,
         instructions: SYSTEM_PROMPT,
-        input: userMessage,
-        text: {
-          format: zodTextFormat(aiResponseSchema, "weekly_menu_plan")
-        },
+        input: plannerMessage,
+        schema: aiPlannedWeekSchema,
+        schemaName: "weekly_menu_structure",
         temperature: 0.7
       });
 
-      const parsed = initialResponse.output_parsed;
-      if (!parsed) {
-        throw new BadRequestException("L'AI non ha restituito un piano utilizzabile. Riprova.");
-      }
-      const validation = await this.resolveAiResponseWithCorrections({
+      const plannerValidation = await this.resolvePlannedWeekWithCorrections({
         model,
-        initialResponseId: initialResponse.id,
-        initialResponse: parsed,
-        existingRecipes: recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
-        requestedSlots: slots
+        initialResponseId: plannerPhase.responseId,
+        initialResponse: plannerPhase.parsed,
+        requestedSlots: normalizedSlots
       });
+
+      const dayContexts = await this.buildDayFillContexts({
+        model,
+        plannedWeek: plannerValidation.result,
+        recipes,
+        ingredients,
+        goal,
+        dietaryProfile
+      });
+
+      let combinedResult: AiResponse = {
+        weeklyPlan: [],
+        newRecipes: [],
+        newIngredients: []
+      };
+      const phaseUsages: UsageTotals[] = [plannerPhase.usage, ...plannerValidation.correctionUsages];
+
+      for (const dayContext of dayContexts) {
+        const dayFill = await this.fillPlannedDay({
+          model,
+          goal,
+          dietaryProfile,
+          plannedWeek: plannerValidation.result,
+          dayContext
+        });
+        phaseUsages.push(dayFill.usage);
+        combinedResult = this.mergeAiResponses(combinedResult, dayFill.parsed);
+      }
+
+      let finalResponse = combinedResult;
+      let correctionSummary: AiGenerateResult["correctionSummary"] = {
+        correctionAttempts: plannerValidation.correctionAttempts,
+        corrected: plannerValidation.correctionAttempts > 0,
+        reachedLimit: plannerValidation.reachedLimit,
+        notes: [...plannerValidation.notes]
+      };
+      const correctionUsages: UsageTotals[] = [...plannerValidation.correctionUsages];
+      let validationIssues: AiGenerateResult["validationIssues"] = [];
+      let openaiResponseId: string | undefined;
+
+      const finalValidation = this.inspectAiResponse(
+        combinedResult,
+        recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
+        normalizedSlots,
+        { requireCompleteCoverage: true }
+      );
+
+      if (!finalValidation.ok) {
+        const repairedResult = await this.resolveAiResponseWithCorrections({
+          model,
+          initialResponseId: null,
+          initialResponse: combinedResult,
+          existingRecipes: recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
+          requestedSlots: normalizedSlots,
+          includeCurrentResponseInPrompt: true
+        });
+        phaseUsages.push(...repairedResult.correctionUsages);
+        correctionUsages.push(...repairedResult.correctionUsages);
+        finalResponse = repairedResult.result;
+        correctionSummary = {
+          correctionAttempts: plannerValidation.correctionAttempts + repairedResult.correctionAttempts,
+          corrected: plannerValidation.correctionAttempts + repairedResult.correctionAttempts > 0,
+          reachedLimit: repairedResult.reachedLimit,
+          notes: [...plannerValidation.notes, ...repairedResult.notes]
+        };
+        validationIssues = repairedResult.issues;
+        openaiResponseId = repairedResult.lastResponseId ?? undefined;
+      } else {
+        finalResponse = finalValidation.result;
+      }
+
       const generationId = await this.logGeneration({
         userId,
         familyId,
@@ -336,38 +427,40 @@ export class AiService {
         model,
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
-        requestedMealCount: slots.length,
-        existingRecipeCount: compactContext.existingRecipes.length,
-        existingIngredientCount: compactContext.existingIngredients.length,
+        requestedMealCount: normalizedSlots.length,
+        existingRecipeCount: recipes.length,
+        existingIngredientCount: ingredients.length,
         requestBreakdown,
         responseBreakdown: {
-          weeklyPlanCount: validation.result.weeklyPlan.length,
-          newRecipesCount: validation.result.newRecipes.length,
-          newIngredientsCount: validation.result.newIngredients.length,
-          correctionAttempts: validation.correctionAttempts,
-          correctionUsage: this.buildUsageSummary(model, this.combineUsageTotals(...validation.correctionUsages))
+          planningMealCount: plannerValidation.result.weeklyPlan.length,
+          dayFillCount: dayContexts.length,
+          weeklyPlanCount: finalResponse.weeklyPlan.length,
+          newRecipesCount: finalResponse.newRecipes.length,
+          newIngredientsCount: finalResponse.newIngredients.length,
+          correctionAttempts: correctionSummary.correctionAttempts,
+          correctionUsage: this.buildUsageSummary(model, this.combineUsageTotals(...correctionUsages)),
+          phaseBreakdown: {
+            plannerCorrections: plannerValidation.correctionAttempts,
+            filledDays: dayContexts.map((day) => ({
+              dayOfWeek: day.dayOfWeek,
+              slots: day.meals.length,
+              candidateRecipes: day.existingRecipes.length
+            }))
+          }
         },
-        usageTotals: this.combineUsageTotals(
-          this.extractUsageTotals(initialResponse.usage),
-          ...validation.correctionUsages
-        ),
+        usageTotals: this.combineUsageTotals(...phaseUsages),
         success: true,
         latencyMs: Date.now() - startedAt,
-        openaiResponseId: validation.lastResponseId
+        openaiResponseId
       });
       return {
         generationId,
         model,
         experimentVariant: modelSelection.variant,
         experimentStrategy: modelSelection.strategy,
-        correctionSummary: {
-          correctionAttempts: validation.correctionAttempts,
-          corrected: validation.correctionAttempts > 0,
-          reachedLimit: validation.reachedLimit,
-          notes: validation.notes
-        },
-        validationIssues: validation.issues,
-        result: validation.result
+        correctionSummary,
+        validationIssues,
+        result: finalResponse
       };
     } catch (error) {
       const failureBreakdown = this.buildFailureBreakdown(error, requestBreakdown);
@@ -379,9 +472,9 @@ export class AiService {
         model,
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
-        requestedMealCount: slots.length,
-        existingRecipeCount: compactContext.existingRecipes.length,
-        existingIngredientCount: compactContext.existingIngredients.length,
+        requestedMealCount: normalizedSlots.length,
+        existingRecipeCount: recipes.length,
+        existingIngredientCount: ingredients.length,
         requestBreakdown,
         responseBreakdown: failureBreakdown,
         success: false,
@@ -991,6 +1084,413 @@ export class AiService {
     } catch {
       return encodingForModel("gpt-4o");
     }
+  }
+
+  private async parseStructuredResponseWithRetry<TSchema extends z.ZodTypeAny>(params: {
+    model: string;
+    instructions: string;
+    input: string;
+    schema: TSchema;
+    schemaName: string;
+    temperature: number;
+    previousResponseId?: string | null;
+  }): Promise<PhaseGenerationResult<z.infer<TSchema>>> {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        const response = await this.getClient().responses.parse({
+          model: params.model,
+          instructions: params.instructions,
+          input: params.input,
+          previous_response_id: params.previousResponseId ?? undefined,
+          text: {
+            format: zodTextFormat(params.schema, params.schemaName)
+          },
+          temperature: params.temperature
+        });
+        const parsed = response.output_parsed;
+        if (!parsed) {
+          throw new BadRequestException("L'AI non ha restituito una risposta strutturata utilizzabile.");
+        }
+        return {
+          parsed,
+          responseId: response.id ?? null,
+          usage: this.extractUsageTotals(response.usage)
+        };
+      } catch (error) {
+        if (!(error instanceof OpenAI.RateLimitError) || attempt >= MAX_RATE_LIMIT_RETRIES) {
+          throw error;
+        }
+
+        const retryAfterSeconds = this.parseRateLimitMetadata(error.message)?.retryAfterSeconds ?? 5;
+        attempt += 1;
+        await this.sleep(Math.ceil(retryAfterSeconds * 1000));
+      }
+    }
+  }
+
+  private buildWeeklyPlannerPromptSections(params: {
+    goal: string;
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+    slotsDescription: string;
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[];
+  }) {
+    return {
+      goal: `Obiettivo nutrizionale: ${params.goal}`,
+      dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(params.dietaryProfile)}`,
+      requestedSlots: `Pianifica la settimana per questi slot: ${params.slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(params.slots)}`,
+      rules: `Restituisci solo la struttura astratta del menu settimanale, senza recipeId e senza tentare di riusare il ricettario esistente in questa fase.
+Compila SOLO weeklyPlan.
+Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
+Ogni slot di weeklyPlan deve avere un array items con una o più componenti del pasto.
+Ogni item deve avere recipeName come etichetta breve e realistica della componente prevista.
+recipeDescription puo aiutare a chiarire la preparazione o l'idea nutrizionale.
+Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
+Quando un item contiene proteine valorizza anche proteinSource scegliendo tra meat, fish, legume, egg, dairy, plant_based, other.
+Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure piu componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
+Varia molto le fonti proteiche nell'arco della settimana.
+Evita la carne in piu di 3 pasti principali a settimana.
+Distribuisci gli eventuali pasti con carne lungo la settimana, evitando pasti con carne troppo ravvicinati e soprattutto evitando di concentrare la carne in giorni consecutivi o nello stesso giorno quando esistono alternative valide.
+Non fondere artificialmente ricette diverse in una sola ricetta se nella realta sono due portate separate dello stesso pasto.
+Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
+Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
+Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`
+    };
+  }
+
+  private toSyntheticAiResponseFromPlannedWeek(plannedWeek: AiPlannedWeek): AiResponse {
+    const mealTypesByRecipeName = new Map<string, Set<MealSlot>>();
+    for (const meal of plannedWeek.weeklyPlan) {
+      for (const item of meal.items) {
+        const key = this.normalizeRecipeName(item.recipeName);
+        const slots = mealTypesByRecipeName.get(key) ?? new Set<MealSlot>();
+        slots.add(meal.mealSlot);
+        mealTypesByRecipeName.set(key, slots);
+      }
+    }
+
+    return {
+      weeklyPlan: plannedWeek.weeklyPlan.map((meal) => ({
+        dayOfWeek: meal.dayOfWeek,
+        mealSlot: meal.mealSlot,
+        items: meal.items.map((item) => ({
+          recipeName: item.recipeName,
+          recipeDescription: item.recipeDescription,
+          nutritionTags: item.nutritionTags,
+          proteinSource: item.proteinSource
+        }))
+      })),
+      newRecipes: [...mealTypesByRecipeName.entries()].map(([recipeName, mealTypes]) => {
+        const sourceItem = plannedWeek.weeklyPlan
+          .flatMap((meal) => meal.items)
+          .find((item) => this.normalizeRecipeName(item.recipeName) === recipeName);
+        return {
+          name: sourceItem?.recipeName ?? recipeName,
+          description: sourceItem?.recipeDescription,
+          mealTypes: [...mealTypes],
+          ingredients: []
+        };
+      }),
+      newIngredients: []
+    };
+  }
+
+  private inspectPlannedWeek(
+    plannedWeek: AiPlannedWeek,
+    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[]
+  ) {
+    return this.inspectAiResponse(
+      this.toSyntheticAiResponseFromPlannedWeek(plannedWeek),
+      [],
+      requestedSlots,
+      { requireCompleteCoverage: true }
+    );
+  }
+
+  private async resolvePlannedWeekWithCorrections(params: {
+    model: string;
+    initialResponseId: string | null;
+    initialResponse: AiPlannedWeek;
+    requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[];
+  }): Promise<{
+    result: AiPlannedWeek;
+    correctionAttempts: number;
+    reachedLimit: boolean;
+    issues: AiValidationIssue[];
+    notes: string[];
+    correctionUsages: UsageTotals[];
+  }> {
+    let currentResponse = params.initialResponse;
+    let previousResponseId = params.initialResponseId;
+    let correctionAttempts = 0;
+    const notes: string[] = [];
+    const correctionUsages: UsageTotals[] = [];
+
+    while (correctionAttempts <= MAX_AI_CORRECTION_ATTEMPTS) {
+      const validation = this.inspectPlannedWeek(currentResponse, params.requestedSlots);
+      if (validation.ok) {
+        return {
+          result: currentResponse,
+          correctionAttempts,
+          reachedLimit: false,
+          issues: [],
+          notes,
+          correctionUsages
+        };
+      }
+
+      if (correctionAttempts === MAX_AI_CORRECTION_ATTEMPTS) {
+        notes.push(`Limite di correzioni raggiunto sulla pianificazione astratta: ${validation.issues.length} criticita residue.`);
+        return {
+          result: currentResponse,
+          correctionAttempts,
+          reachedLimit: true,
+          issues: validation.issues,
+          notes,
+          correctionUsages
+        };
+      }
+
+      correctionAttempts += 1;
+      notes.push(`Correzione automatica planner ${correctionAttempts}: ${this.summarizeIssuesForUser(validation.issues)}`);
+      const followUp = await this.parseStructuredResponseWithRetry({
+        model: params.model,
+        instructions: SYSTEM_PROMPT,
+        input: this.buildPlannedWeekCorrectionPrompt(validation.issues, currentResponse),
+        previousResponseId,
+        schema: aiPlannedWeekSchema,
+        schemaName: "weekly_menu_structure",
+        temperature: 0.4
+      });
+      previousResponseId = followUp.responseId;
+      correctionUsages.push(followUp.usage);
+      currentResponse = followUp.parsed;
+    }
+
+    throw new BadRequestException("L'AI non è riuscita a correggere la pianificazione astratta.");
+  }
+
+  private buildPlannedWeekCorrectionPrompt(issues: AiValidationIssue[], currentResponse: AiPlannedWeek) {
+    return [
+      "La pianificazione astratta della settimana non rispetta alcuni vincoli.",
+      "Mantieni il formato strutturato identico, compila solo weeklyPlan e non aggiungere recipeId.",
+      `Questa è la versione attuale da correggere:\n${JSON.stringify(currentResponse)}`,
+      "Correggi i problemi seguenti:",
+      [...new Set(issues.map((issue) => `- ${issue.message}`))].join("\n"),
+      "Ricontrolla internamente copertura degli slot, completezza nutrizionale dei pasti principali, limite della carne e varieta proteica."
+    ].join("\n\n");
+  }
+
+  private async buildDayFillContexts(params: {
+    model: string;
+    plannedWeek: AiPlannedWeek;
+    recipes: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      mealTypes: MealSlot[];
+      semanticText: string | null;
+      embeddingVector: number[];
+      updatedAt: Date;
+      ingredients: { ingredient: { name: string; category: string | null } }[];
+    }>;
+    ingredients: Array<{ name: string; category: string | null }>;
+    goal: string;
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+  }): Promise<DayFillContext[]> {
+    const ingredientCategoryByName = new Map(
+      params.ingredients.map((ingredient) => [this.normalizeRecipeName(ingredient.name), ingredient.category])
+    );
+    const mealsByDay = new Map<number, AiPlannedWeek["weeklyPlan"]>();
+
+    for (const meal of params.plannedWeek.weeklyPlan) {
+      const meals = mealsByDay.get(meal.dayOfWeek) ?? [];
+      meals.push(meal);
+      mealsByDay.set(meal.dayOfWeek, meals);
+    }
+
+    const queryEntries = [...mealsByDay.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .flatMap(([dayOfWeek, meals]) =>
+        meals.flatMap((meal) =>
+          meal.items.map((item, itemIndex) => ({
+            dayOfWeek,
+            mealSlot: meal.mealSlot,
+            itemIndex,
+            item,
+            queryText: this.buildCandidateQueryText({
+              mealSlot: meal.mealSlot,
+              item,
+              goal: params.goal,
+              dietaryProfile: params.dietaryProfile
+            })
+          }))
+        )
+      );
+
+    const queryEmbeddings = await this.recipeSemantics.embedQuery(queryEntries.map((entry) => entry.queryText));
+    const contexts: DayFillContext[] = [];
+
+    for (const [dayOfWeek, meals] of [...mealsByDay.entries()].sort((a, b) => a[0] - b[0])) {
+      const dayEntries = queryEntries.filter((entry) => entry.dayOfWeek === dayOfWeek);
+      const selectedRecipeIds = new Set<string>();
+      const candidateRefs: DayFillContext["candidateRefs"] = [];
+
+      for (const meal of meals) {
+        const itemRefs: DayFillCandidateReference[] = [];
+        for (const [itemIndex, item] of meal.items.entries()) {
+          const queryEntryIndex = queryEntries.findIndex(
+            (entry) =>
+              entry.dayOfWeek === dayOfWeek &&
+              entry.mealSlot === meal.mealSlot &&
+              entry.itemIndex === itemIndex
+          );
+          const queryEmbedding = queryEmbeddings[queryEntryIndex] ?? [];
+          const candidates = params.recipes
+            .filter((recipe) => recipe.mealTypes.length === 0 || recipe.mealTypes.includes(meal.mealSlot))
+            .sort((a, b) => this.comparePromptRecipes(a, b, meal.mealSlot, [meal.mealSlot], queryEmbedding))
+            .slice(0, DAY_FILL_RECIPE_LIMIT_PER_ITEM);
+
+          for (const candidate of candidates) {
+            selectedRecipeIds.add(candidate.id);
+          }
+
+          itemRefs.push({
+            itemIndex,
+            candidateRecipeIds: candidates.map((candidate) => candidate.id)
+          });
+        }
+
+        candidateRefs.push({
+          mealSlot: meal.mealSlot,
+          items: itemRefs
+        });
+      }
+
+      const existingRecipes = params.recipes
+        .filter((recipe) => selectedRecipeIds.has(recipe.id))
+        .sort((a, b) => a.name.localeCompare(b.name, "it"))
+        .map((recipe) => ({
+          id: recipe.id,
+          name: recipe.name,
+          description: recipe.description,
+          mealTypes: recipe.mealTypes,
+          ingredients: recipe.ingredients
+            .map((entry) => entry.ingredient.name)
+            .sort((a, b) => a.localeCompare(b, "it"))
+            .slice(0, 3)
+        }));
+
+      contexts.push({
+        dayOfWeek,
+        meals,
+        existingRecipes,
+        existingIngredients: this.buildPromptIngredientsFromRecipes(
+          params.recipes.filter((recipe) => selectedRecipeIds.has(recipe.id)),
+          ingredientCategoryByName,
+          18
+        ),
+        candidateRefs
+      });
+    }
+
+    return contexts;
+  }
+
+  private buildCandidateQueryText(params: {
+    mealSlot: MealSlot;
+    item: AiPlannedWeek["weeklyPlan"][number]["items"][number];
+    goal: string;
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+  }) {
+    return [
+      `Tipo pasto: ${MEAL_SLOT_LABELS[params.mealSlot]}`,
+      `Idea: ${params.item.recipeName}`,
+      params.item.recipeDescription ? `Descrizione: ${params.item.recipeDescription}` : "",
+      params.item.nutritionTags?.length ? `Ruolo nutrizionale: ${params.item.nutritionTags.join(", ")}` : "",
+      params.item.proteinSource ? `Fonte proteica: ${params.item.proteinSource}` : "",
+      `Obiettivo: ${params.goal}`,
+      params.dietaryProfile.preferences ? `Preferenze: ${params.dietaryProfile.preferences}` : "",
+      params.dietaryProfile.intolerances ? `Intolleranze: ${params.dietaryProfile.intolerances}` : "",
+      params.dietaryProfile.allergies ? `Allergie: ${params.dietaryProfile.allergies}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private async fillPlannedDay(params: {
+    model: string;
+    goal: string;
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+    plannedWeek: AiPlannedWeek;
+    dayContext: DayFillContext;
+  }): Promise<PhaseGenerationResult<AiResponse>> {
+    const daySections = this.buildDayFillPromptSections(params);
+    const input = [
+      daySections.goal,
+      daySections.dietaryProfile,
+      daySections.weeklyContext,
+      daySections.dayPlan,
+      daySections.existingRecipes,
+      daySections.existingIngredients,
+      daySections.rules
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    return this.parseStructuredResponseWithRetry({
+      model: params.model,
+      instructions: SYSTEM_PROMPT,
+      input,
+      schema: aiResponseSchema,
+      schemaName: `weekly_menu_day_${params.dayContext.dayOfWeek}`,
+      temperature: 0.5
+    });
+  }
+
+  private buildDayFillPromptSections(params: {
+    goal: string;
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+    plannedWeek: AiPlannedWeek;
+    dayContext: DayFillContext;
+  }) {
+    const weeklyOutline = params.plannedWeek.weeklyPlan.map((meal) => ({
+      dayOfWeek: meal.dayOfWeek,
+      mealSlot: meal.mealSlot,
+      items: meal.items.map((item) => ({
+        recipeName: item.recipeName,
+        nutritionTags: item.nutritionTags,
+        proteinSource: item.proteinSource
+      }))
+    }));
+
+    return {
+      goal: `Obiettivo nutrizionale: ${params.goal}`,
+      dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(params.dietaryProfile)}`,
+      weeklyContext: `Questa è la struttura astratta già pianificata per l'intera settimana. Mantieni la coerenza con queste scelte nutrizionali:\n${JSON.stringify(weeklyOutline)}`,
+      dayPlan: `Completa SOLO questi slot del giorno ${params.dayContext.dayOfWeek} rispettando la struttura astratta seguente:\n${JSON.stringify({
+        dayOfWeek: params.dayContext.dayOfWeek,
+        meals: params.dayContext.meals,
+        candidateRefs: params.dayContext.candidateRefs
+      })}`,
+      existingRecipes: `Ricette candidate già presenti nell'app (riusale quando possibile, riportando il loro id corretto):\n${JSON.stringify(params.dayContext.existingRecipes)}`,
+      existingIngredients: params.dayContext.existingIngredients.length > 0
+        ? `Ingredienti già presenti e collegati alle ricette candidate:\n${JSON.stringify(params.dayContext.existingIngredients)}`
+        : "",
+      rules: `Restituisci SOLO gli slot del giorno richiesto, nel formato finale completo.
+Se una ricetta candidata soddisfa bene lo slot, riusala compilando recipeId.
+Scegli preferibilmente tra le ricette candidate indicate per ogni componente. Crea una nuova ricetta solo quando nessuna candidata e adeguata oppure quando serve una variante davvero piu coerente con il piano astratto.
+Mantieni compatibilita con mealTypes delle ricette esistenti.
+Per ogni item mantieni coerenti nutritionTags e proteinSource con la struttura astratta.
+Per ogni nuova ricetta inserisci la stessa voce anche in newRecipes con mealTypes coerenti e ingredienti realistici.
+In newIngredients inserisci solo ingredienti davvero nuovi rispetto al contesto candidato.
+Non aggiungere slot extra e non omettere slot richiesti per questo giorno.`
+    };
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async buildCompactPromptContext(
@@ -1955,7 +2455,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private async resolveAiResponseWithCorrections(params: {
     model: string;
-    initialResponseId: string;
+    initialResponseId: string | null;
     initialResponse: AiResponse;
     existingRecipes: { id: string; name: string; mealTypes: MealSlot[] }[];
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[];
@@ -2027,26 +2527,22 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       const issueSummary = this.summarizeIssuesForUser(issuesToCorrect);
       notes.push(`Correzione automatica ${correctionAttempts}: ${issueSummary}`);
 
-      const followUpResponse = await this.getClient().responses.parse({
+      const followUpResponse = await this.parseStructuredResponseWithRetry({
         model: params.model,
-        previous_response_id: previousResponseId,
+        instructions: SYSTEM_PROMPT,
+        previousResponseId,
         input: this.buildCorrectionPrompt(issuesToCorrect, currentResponse, {
           requireCompleteCoverage,
           includeCurrentResponseInPrompt: params.includeCurrentResponseInPrompt ?? true
         }),
-        text: {
-          format: zodTextFormat(aiResponseSchema, "weekly_menu_plan")
-        },
+        schema: aiResponseSchema,
+        schemaName: "weekly_menu_plan",
         temperature: 0.4
       });
-      const parsed = followUpResponse.output_parsed;
-      if (!parsed) {
-        throw new BadRequestException("L'AI non ha restituito un piano correggibile dopo una revisione.");
-      }
 
-      previousResponseId = followUpResponse.id;
-      correctionUsages.push(this.extractUsageTotals(followUpResponse.usage));
-      currentResponse = this.mergeAiResponses(currentResponse, parsed);
+      previousResponseId = followUpResponse.responseId;
+      correctionUsages.push(followUpResponse.usage);
+      currentResponse = this.mergeAiResponses(currentResponse, followUpResponse.parsed);
     }
 
     throw new BadRequestException("L'AI non è riuscita a correggere il piano.");
