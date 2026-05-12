@@ -17,6 +17,8 @@ export function RecipesPage() {
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedRecipeIds, setSelectedRecipeIds] = useState<string[]>([]);
 
   const recipesQuery = useQuery({
     queryKey: ["recipes", activeFamilyId],
@@ -55,6 +57,18 @@ export function RecipesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["recipes", activeFamilyId] })
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => api.delete(`/recipes/${id}?familyId=${activeFamilyId}`, token!)));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recipes", activeFamilyId] });
+      setSelectedRecipeIds([]);
+      setSelectionMode(false);
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Errore durante l'eliminazione")
+  });
+
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
@@ -63,6 +77,17 @@ export function RecipesPage() {
     setMealTypes([]);
     setSelectedIngredients([]);
     setError("");
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((current) => !current);
+    setSelectedRecipeIds([]);
+  };
+
+  const toggleRecipeSelection = (recipeId: string) => {
+    setSelectedRecipeIds((prev) =>
+      prev.includes(recipeId) ? prev.filter((id) => id !== recipeId) : [...prev, recipeId]
+    );
   };
 
   const startEdit = (recipe: Recipe) => {
@@ -152,19 +177,62 @@ export function RecipesPage() {
     .map(({ recipe }) => recipe);
 
   const visibleRecipes = activeSearch ? scoredRecipes.map(({ recipe }) => recipe) : recipesQuery.data ?? [];
+  const allVisibleRecipeIds = visibleRecipes.map((recipe) => recipe.id);
+  const areAllVisibleSelected =
+    allVisibleRecipeIds.length > 0 && allVisibleRecipeIds.every((id) => selectedRecipeIds.includes(id));
+
+  const toggleSelectAllVisible = () => {
+    if (areAllVisibleSelected) {
+      setSelectedRecipeIds((prev) => prev.filter((id) => !allVisibleRecipeIds.includes(id)));
+      return;
+    }
+    setSelectedRecipeIds((prev) => [...new Set([...prev, ...allVisibleRecipeIds])]);
+  };
 
   return (
     <div className="flex flex-col gap-5">
       <div className="app-page-header flex items-center justify-between">
         <h1 className="text-2xl font-bold text-ink">Ricette</h1>
-        <button
-          onClick={() => { resetForm(); setShowForm(true); }}
-          className="app-btn-sm app-btn-sage"
-          type="button"
-        >
-          + Aggiungi
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={toggleSelectionMode}
+            className={`app-btn-sm ${selectionMode ? "app-btn-secondary" : "app-btn-secondary"}`}
+            type="button"
+          >
+            {selectionMode ? "Fine selezione" : "Seleziona"}
+          </button>
+          <button
+            onClick={() => { resetForm(); setShowForm(true); }}
+            className="app-btn-sm app-btn-sage"
+            type="button"
+          >
+            + Aggiungi
+          </button>
+        </div>
       </div>
+
+      {selectionMode && (
+        <div className="app-panel flex flex-wrap items-center gap-2">
+          <button type="button" onClick={toggleSelectAllVisible} className="app-btn-sm app-btn-secondary">
+            {areAllVisibleSelected ? "Deseleziona tutti" : "Seleziona tutti"}
+          </button>
+          <button
+            type="button"
+            onClick={() => bulkDeleteMutation.mutate(selectedRecipeIds)}
+            disabled={selectedRecipeIds.length === 0 || bulkDeleteMutation.isPending}
+            className="app-btn-sm bg-rose-500 text-white disabled:opacity-60"
+          >
+            {bulkDeleteMutation.isPending
+              ? "Eliminazione..."
+              : `Elimina selezionato${selectedRecipeIds.length === 1 ? "" : "/i"}`}
+          </button>
+          <p className="text-xs text-slate-500">
+            {selectedRecipeIds.length === 0
+              ? "Nessuna ricetta selezionata"
+              : `${selectedRecipeIds.length} ricette selezionate`}
+          </p>
+        </div>
+      )}
 
       <div className="app-panel">
         <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -290,7 +358,16 @@ export function RecipesPage() {
         {visibleRecipes.map((recipe) => (
           <div key={recipe.id} className="app-panel">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex-1">
+              <div className="flex flex-1 items-start gap-3">
+                {selectionMode && (
+                  <input
+                    type="checkbox"
+                    checked={selectedRecipeIds.includes(recipe.id)}
+                    onChange={() => toggleRecipeSelection(recipe.id)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-sage focus:ring-sage"
+                  />
+                )}
+                <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <h3 className="font-bold text-ink">{recipe.name}</h3>
                   {recipe.mealTypes.map((slot) => (
@@ -312,14 +389,17 @@ export function RecipesPage() {
                   </div>
                 )}
               </div>
-              <div className="flex shrink-0 gap-2">
-                <button onClick={() => startEdit(recipe)} className="text-xs text-slate-400 hover:text-ink" type="button">
-                  Modifica
-                </button>
-                <button onClick={() => deleteMutation.mutate(recipe.id)} className="text-xs text-rose-400 hover:text-rose-600" type="button">
-                  Elimina
-                </button>
               </div>
+              {!selectionMode && (
+                <div className="flex shrink-0 gap-2">
+                  <button onClick={() => startEdit(recipe)} className="text-xs text-slate-400 hover:text-ink" type="button">
+                    Modifica
+                  </button>
+                  <button onClick={() => deleteMutation.mutate(recipe.id)} className="text-xs text-rose-400 hover:text-rose-600" type="button">
+                    Elimina
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}

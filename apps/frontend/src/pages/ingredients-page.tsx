@@ -14,6 +14,8 @@ export function IngredientsPage() {
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIngredientIds, setSelectedIngredientIds] = useState<string[]>([]);
 
   const ingredientsQuery = useQuery({
     queryKey: ["ingredients", activeFamilyId],
@@ -47,12 +49,35 @@ export function IngredientsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ingredients", activeFamilyId] })
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => api.delete(`/ingredients/${id}?familyId=${activeFamilyId}`, token!)));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ingredients", activeFamilyId] });
+      setSelectedIngredientIds([]);
+      setSelectionMode(false);
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Errore durante l'eliminazione")
+  });
+
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
     setName("");
     setCategory("");
     setError("");
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((current) => !current);
+    setSelectedIngredientIds([]);
+  };
+
+  const toggleIngredientSelection = (ingredientId: string) => {
+    setSelectedIngredientIds((prev) =>
+      prev.includes(ingredientId) ? prev.filter((id) => id !== ingredientId) : [...prev, ingredientId]
+    );
   };
 
   const startEdit = (ing: Ingredient) => {
@@ -105,19 +130,63 @@ export function IngredientsPage() {
   }, {});
 
   const sortedGroups = Object.entries(visibleGrouped).sort(([a], [b]) => a.localeCompare(b));
+  const allVisibleIngredientIds = visibleIngredients.map((ingredient) => ingredient.id);
+  const areAllVisibleSelected =
+    allVisibleIngredientIds.length > 0 &&
+    allVisibleIngredientIds.every((id) => selectedIngredientIds.includes(id));
+
+  const toggleSelectAllVisible = () => {
+    if (areAllVisibleSelected) {
+      setSelectedIngredientIds((prev) => prev.filter((id) => !allVisibleIngredientIds.includes(id)));
+      return;
+    }
+    setSelectedIngredientIds((prev) => [...new Set([...prev, ...allVisibleIngredientIds])]);
+  };
 
   return (
     <div className="flex flex-col gap-5">
       <div className="app-page-header flex items-center justify-between">
         <h1 className="text-2xl font-bold text-ink">Ingredienti</h1>
-        <button
-          onClick={() => { resetForm(); setShowForm(true); }}
-          className="app-btn-sm app-btn-sage"
-          type="button"
-        >
-          + Aggiungi
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={toggleSelectionMode}
+            className="app-btn-sm app-btn-secondary"
+            type="button"
+          >
+            {selectionMode ? "Fine selezione" : "Seleziona"}
+          </button>
+          <button
+            onClick={() => { resetForm(); setShowForm(true); }}
+            className="app-btn-sm app-btn-sage"
+            type="button"
+          >
+            + Aggiungi
+          </button>
+        </div>
       </div>
+
+      {selectionMode && (
+        <div className="app-panel flex flex-wrap items-center gap-2">
+          <button type="button" onClick={toggleSelectAllVisible} className="app-btn-sm app-btn-secondary">
+            {areAllVisibleSelected ? "Deseleziona tutti" : "Seleziona tutti"}
+          </button>
+          <button
+            type="button"
+            onClick={() => bulkDeleteMutation.mutate(selectedIngredientIds)}
+            disabled={selectedIngredientIds.length === 0 || bulkDeleteMutation.isPending}
+            className="app-btn-sm bg-rose-500 text-white disabled:opacity-60"
+          >
+            {bulkDeleteMutation.isPending
+              ? "Eliminazione..."
+              : `Elimina selezionato${selectedIngredientIds.length === 1 ? "" : "/i"}`}
+          </button>
+          <p className="text-xs text-slate-500">
+            {selectedIngredientIds.length === 0
+              ? "Nessun ingrediente selezionato"
+              : `${selectedIngredientIds.length} ingredienti selezionati`}
+          </p>
+        </div>
+      )}
 
       <div className="app-panel">
         <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -200,23 +269,35 @@ export function IngredientsPage() {
                 key={ing.id}
                 className="flex items-center justify-between rounded-2xl bg-slate-50/80 px-4 py-3"
               >
-                <span className="font-medium text-ink">{ing.name}</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => startEdit(ing)}
-                    className="text-xs text-slate-400 hover:text-ink"
-                    type="button"
-                  >
-                    Modifica
-                  </button>
-                  <button
-                    onClick={() => deleteMutation.mutate(ing.id)}
-                    className="text-xs text-rose-400 hover:text-rose-600"
-                    type="button"
-                  >
-                    Elimina
-                  </button>
+                <div className="flex items-center gap-3">
+                  {selectionMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIngredientIds.includes(ing.id)}
+                      onChange={() => toggleIngredientSelection(ing.id)}
+                      className="h-4 w-4 rounded border-slate-300 text-sage focus:ring-sage"
+                    />
+                  )}
+                  <span className="font-medium text-ink">{ing.name}</span>
                 </div>
+                {!selectionMode && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startEdit(ing)}
+                      className="text-xs text-slate-400 hover:text-ink"
+                      type="button"
+                    >
+                      Modifica
+                    </button>
+                    <button
+                      onClick={() => deleteMutation.mutate(ing.id)}
+                      className="text-xs text-rose-400 hover:text-rose-600"
+                      type="button"
+                    >
+                      Elimina
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
