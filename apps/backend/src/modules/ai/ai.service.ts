@@ -18,14 +18,20 @@ import { MEAL_SLOT_LABELS, MEAL_SLOT_ORDER, mealSlotSchema, type MealSlot } from
 import { PrismaService } from "../../prisma/prisma.service";
 import { FamiliesService } from "../families/families.service";
 
+const nutritionTagSchema = z.enum(["carb", "protein", "fat", "vegetable"]);
+const aiMealItemSchema = z.object({
+  recipeId: z.string().optional(),
+  recipeName: z.string(),
+  recipeDescription: z.string().optional(),
+  nutritionTags: z.array(nutritionTagSchema).optional()
+});
+
 export const aiResponseSchema = z.object({
   weeklyPlan: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
       mealSlot: mealSlotSchema,
-      recipeId: z.string().optional(),
-      recipeName: z.string(),
-      recipeDescription: z.string().optional()
+      items: z.array(aiMealItemSchema).min(1)
     })
   ),
   newRecipes: z.array(
@@ -117,6 +123,8 @@ interface AiValidationIssue {
     | "slot_not_requested"
     | "slot_duplicate"
     | "slot_missing"
+    | "meal_missing_items"
+    | "meal_missing_nutrition"
     | "existing_recipe_incompatible_slot"
     | "unknown_recipe_id"
     | "new_recipe_missing"
@@ -240,9 +248,14 @@ export class AiService {
       requestedSlots: `Genera un piano per questi slot: ${slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(slots)}`,
       rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
 Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
+Ogni slot di weeklyPlan deve avere un array items con una o più componenti del pasto.
+Ogni item deve avere recipeName; recipeId va compilato solo se corrisponde a una ricetta esistente in existingRecipes.
 Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes e non assegnarla mai a uno slot incompatibile con i suoi mealTypes.
 Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
 Per ogni nuova ricetta compila mealTypes in modo coerente con gli slot in cui la usi.
+Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
+Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure più componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
+Non fondere artificialmente ricette diverse in una sola ricetta se nella realtà sono due portate separate dello stesso pasto.
 Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
 Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
 Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
@@ -480,20 +493,24 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     );
 
     const usedNewRecipeNames = new Set(
-      normalizedResponse.weeklyPlan
-        .filter((meal) => !meal.recipeId)
-        .map((meal) => this.normalizeRecipeName(meal.recipeName))
+      normalizedResponse.weeklyPlan.flatMap((meal) =>
+        meal.items
+          .filter((item) => !item.recipeId)
+          .map((item) => this.normalizeRecipeName(item.recipeName))
+      )
     );
 
     const usedIngredientNames = new Set<string>();
     const inferredMealTypesByRecipeName = new Map<string, Set<MealSlot>>();
 
     for (const meal of normalizedResponse.weeklyPlan) {
-      const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
-      if (meal.recipeId) continue;
-      const slots = inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>();
-      slots.add(meal.mealSlot);
-      inferredMealTypesByRecipeName.set(normalizedRecipeName, slots);
+      for (const item of meal.items) {
+        const normalizedRecipeName = this.normalizeRecipeName(item.recipeName);
+        if (item.recipeId) continue;
+        const slots = inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>();
+        slots.add(meal.mealSlot);
+        inferredMealTypesByRecipeName.set(normalizedRecipeName, slots);
+      }
     }
 
     const recipesToCreate = [...usedNewRecipeNames]
@@ -501,14 +518,20 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         const explicitRecipe = recipesToCreateByName.get(recipeName);
         if (explicitRecipe) return explicitRecipe;
 
-        const matchingMeal = normalizedResponse.weeklyPlan.find(
-          (meal) => !meal.recipeId && this.normalizeRecipeName(meal.recipeName) === recipeName
+        const matchingMealItem = normalizedResponse.weeklyPlan.flatMap((meal) =>
+          meal.items.map((item) => ({
+            mealSlot: meal.mealSlot,
+            recipeName: item.recipeName,
+            recipeDescription: item.recipeDescription
+          }))
+        ).find(
+          (item) => this.normalizeRecipeName(item.recipeName) === recipeName
         );
-        if (!matchingMeal) return null;
+        if (!matchingMealItem) return null;
 
         return {
-          name: matchingMeal.recipeName,
-          description: matchingMeal.recipeDescription,
+          name: matchingMealItem.recipeName,
+          description: matchingMealItem.recipeDescription,
           mealTypes: [...(inferredMealTypesByRecipeName.get(recipeName) ?? new Set<MealSlot>())],
           ingredients: []
         };
@@ -583,37 +606,50 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       });
 
       const existingRecipeIds = new Set(existingRecipes.map((recipe) => recipe.id));
-      const finalMeals: Array<{ dayOfWeek: number; mealSlot: MealSlot; recipeId: string }> = [];
+      const finalMeals: Array<{
+        dayOfWeek: number;
+        mealSlot: MealSlot;
+        items: { recipeId: string; customName: null }[];
+      }> = [];
 
       for (const meal of normalizedResponse.weeklyPlan) {
-        const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
-        let recipeId =
-          meal.recipeId && existingRecipeIds.has(meal.recipeId)
-            ? meal.recipeId
-            : recipeIdsByName.get(normalizedRecipeName);
+        const finalItems: { recipeId: string; customName: null }[] = [];
 
-        if (!recipeId) {
-          const inferredMealTypes = [
-            ...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>([meal.mealSlot]))
-          ];
-          const createdRecipe = await tx.recipe.create({
-            data: {
-              name: meal.recipeName.trim(),
-              description: meal.recipeDescription?.trim() || null,
-              mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
-              familyId,
-              createdById: userId
-            },
-            select: { id: true, name: true }
+        for (const item of meal.items) {
+          const normalizedRecipeName = this.normalizeRecipeName(item.recipeName);
+          let recipeId =
+            item.recipeId && existingRecipeIds.has(item.recipeId)
+              ? item.recipeId
+              : recipeIdsByName.get(normalizedRecipeName);
+
+          if (!recipeId) {
+            const inferredMealTypes = [
+              ...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>([meal.mealSlot]))
+            ];
+            const createdRecipe = await tx.recipe.create({
+              data: {
+                name: item.recipeName.trim(),
+                description: item.recipeDescription?.trim() || null,
+                mealTypes: inferredMealTypes.length > 0 ? inferredMealTypes : [meal.mealSlot],
+                familyId,
+                createdById: userId
+              },
+              select: { id: true, name: true }
+            });
+            recipeId = createdRecipe.id;
+            recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+          }
+
+          finalItems.push({
+            recipeId,
+            customName: null
           });
-          recipeId = createdRecipe.id;
-          recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
         }
 
         finalMeals.push({
           dayOfWeek: meal.dayOfWeek,
           mealSlot: meal.mealSlot,
-          recipeId
+          items: finalItems
         });
       }
 
@@ -635,7 +671,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       }
 
       for (const meal of finalMeals) {
-        await tx.menuMeal.upsert({
+        const savedMeal = await tx.menuMeal.upsert({
           where: {
             weeklyMenuId_dayOfWeek_mealSlot: {
               weeklyMenuId: menu.id,
@@ -646,13 +682,19 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           create: {
             weeklyMenuId: menu.id,
             dayOfWeek: meal.dayOfWeek,
-            mealSlot: meal.mealSlot,
-            recipeId: meal.recipeId
+            mealSlot: meal.mealSlot
           },
-          update: {
-            recipeId: meal.recipeId,
-            customName: null
-          }
+          update: {}
+        });
+
+        await tx.menuMealItem.deleteMany({ where: { menuMealId: savedMeal.id } });
+        await tx.menuMealItem.createMany({
+          data: meal.items.map((item, index) => ({
+            menuMealId: savedMeal.id,
+            recipeId: item.recipeId,
+            customName: item.customName,
+            sortOrder: index
+          }))
         });
       }
 
@@ -661,12 +703,17 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         include: {
           meals: {
             include: {
-              recipe: {
+              items: {
                 include: {
-                  ingredients: {
-                    include: { ingredient: { select: { id: true, name: true, category: true } } }
+                  recipe: {
+                    include: {
+                      ingredients: {
+                        include: { ingredient: { select: { id: true, name: true, category: true } } }
+                      }
+                    }
                   }
-                }
+                },
+                orderBy: { sortOrder: "asc" }
               }
             }
           }
@@ -955,7 +1002,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     const newRecipeNames = new Set(
       response.newRecipes.map((recipe) => this.normalizeRecipeName(recipe.name))
     );
-    const normalizedWeeklyPlan = response.weeklyPlan.map((meal) => ({ ...meal }));
+    const normalizedWeeklyPlan = response.weeklyPlan.map((meal) => ({
+      ...meal,
+      items: meal.items.map((item) => ({ ...item }))
+    }));
     const issues: AiValidationIssue[] = [];
 
     for (const meal of normalizedWeeklyPlan) {
@@ -965,8 +1015,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           code: "slot_not_requested",
           message: `La risposta AI contiene uno slot non richiesto: ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
           dayOfWeek: meal.dayOfWeek,
-          mealSlot: meal.mealSlot,
-          recipeName: meal.recipeName
+          mealSlot: meal.mealSlot
         });
         continue;
       }
@@ -975,30 +1024,77 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           code: "slot_duplicate",
           message: `La risposta AI contiene uno slot duplicato: ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
           dayOfWeek: meal.dayOfWeek,
-          mealSlot: meal.mealSlot,
-          recipeName: meal.recipeName
+          mealSlot: meal.mealSlot
         });
         continue;
       }
       returnedSlotKeys.add(slotKey);
 
-      const normalizedRecipeName = this.normalizeRecipeName(meal.recipeName);
-      const matchedExistingRecipe = existingRecipesByName.get(normalizedRecipeName);
+      if (meal.items.length === 0) {
+        issues.push({
+          code: "meal_missing_items",
+          message: `Lo slot ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non contiene alcuna componente.`,
+          dayOfWeek: meal.dayOfWeek,
+          mealSlot: meal.mealSlot
+        });
+        continue;
+      }
 
-      if (meal.recipeId) {
-        if (existingRecipeIdsSet.has(meal.recipeId)) {
-          const exactRecipe = existingRecipes.find((recipe) => recipe.id === meal.recipeId);
-          if (exactRecipe && exactRecipe.mealTypes.length > 0 && !exactRecipe.mealTypes.includes(meal.mealSlot)) {
-            if (!options.allowIncompatibleSlots) {
-              issues.push({
-                code: "existing_recipe_incompatible_slot",
-                message: `La ricetta "${exactRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-                dayOfWeek: meal.dayOfWeek,
-                mealSlot: meal.mealSlot,
-                recipeName: exactRecipe.name
-              });
+      for (const item of meal.items) {
+        const normalizedRecipeName = this.normalizeRecipeName(item.recipeName);
+        const matchedExistingRecipe = existingRecipesByName.get(normalizedRecipeName);
+
+        if (item.recipeId) {
+          if (existingRecipeIdsSet.has(item.recipeId)) {
+            const exactRecipe = existingRecipes.find((recipe) => recipe.id === item.recipeId);
+            if (exactRecipe && exactRecipe.mealTypes.length > 0 && !exactRecipe.mealTypes.includes(meal.mealSlot)) {
+              if (!options.allowIncompatibleSlots) {
+                issues.push({
+                  code: "existing_recipe_incompatible_slot",
+                  message: `La ricetta "${exactRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+                  dayOfWeek: meal.dayOfWeek,
+                  mealSlot: meal.mealSlot,
+                  recipeName: exactRecipe.name
+                });
+              }
             }
+            item.recipeName = exactRecipe?.name ?? item.recipeName;
+            continue;
           }
+
+          if (matchedExistingRecipe) {
+            if (
+              matchedExistingRecipe.mealTypes.length > 0 &&
+              !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
+            ) {
+              if (!options.allowIncompatibleSlots) {
+                issues.push({
+                  code: "existing_recipe_incompatible_slot",
+                  message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+                  dayOfWeek: meal.dayOfWeek,
+                  mealSlot: meal.mealSlot,
+                  recipeName: matchedExistingRecipe.name
+                });
+                continue;
+              }
+            }
+            item.recipeId = matchedExistingRecipe.id;
+            item.recipeName = matchedExistingRecipe.name;
+            continue;
+          }
+
+          if (newRecipeNames.has(normalizedRecipeName)) {
+            delete item.recipeId;
+            continue;
+          }
+
+          issues.push({
+            code: "unknown_recipe_id",
+            message: `La risposta AI contiene un recipeId non risolvibile per "${item.recipeName}" in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            recipeName: item.recipeName
+          });
           continue;
         }
 
@@ -1015,75 +1111,64 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
                 mealSlot: meal.mealSlot,
                 recipeName: matchedExistingRecipe.name
               });
-              continue;
             }
           }
-          meal.recipeId = matchedExistingRecipe.id;
-          meal.recipeName = matchedExistingRecipe.name;
+          item.recipeId = matchedExistingRecipe.id;
+          item.recipeName = matchedExistingRecipe.name;
           continue;
         }
 
-        if (newRecipeNames.has(normalizedRecipeName)) {
-          delete meal.recipeId;
+        if (!newRecipeNames.has(normalizedRecipeName)) {
+          issues.push({
+            code: "new_recipe_missing",
+            message: `La nuova ricetta "${item.recipeName}" usata in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non è presente in newRecipes.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot,
+            recipeName: item.recipeName
+          });
           continue;
         }
 
-        issues.push({
-          code: "unknown_recipe_id",
-          message: `La risposta AI contiene un recipeId non risolvibile per "${meal.recipeName}" in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
-          dayOfWeek: meal.dayOfWeek,
-          mealSlot: meal.mealSlot,
-          recipeName: meal.recipeName
-        });
-        continue;
-      }
-
-      if (matchedExistingRecipe) {
+        const matchingNewRecipe = response.newRecipes.find(
+          (recipe) => this.normalizeRecipeName(recipe.name) === normalizedRecipeName
+        );
         if (
-          matchedExistingRecipe.mealTypes.length > 0 &&
-          !matchedExistingRecipe.mealTypes.includes(meal.mealSlot)
+          matchingNewRecipe?.mealTypes?.length &&
+          !matchingNewRecipe.mealTypes.includes(meal.mealSlot)
         ) {
           if (!options.allowIncompatibleSlots) {
             issues.push({
-              code: "existing_recipe_incompatible_slot",
-              message: `La ricetta "${matchedExistingRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+              code: "new_recipe_incompatible_slot",
+              message: `La nuova ricetta "${matchingNewRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
               dayOfWeek: meal.dayOfWeek,
               mealSlot: meal.mealSlot,
-              recipeName: matchedExistingRecipe.name
+              recipeName: matchingNewRecipe.name
             });
-            continue;
           }
         }
-        meal.recipeId = matchedExistingRecipe.id;
-        meal.recipeName = matchedExistingRecipe.name;
-        continue;
       }
 
-      if (!newRecipeNames.has(normalizedRecipeName)) {
-        issues.push({
-          code: "new_recipe_missing",
-          message: `La nuova ricetta "${meal.recipeName}" usata in ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non è presente in newRecipes.`,
-          dayOfWeek: meal.dayOfWeek,
-          mealSlot: meal.mealSlot,
-          recipeName: meal.recipeName
-        });
-        continue;
-      }
-
-      const matchingNewRecipe = response.newRecipes.find(
-        (recipe) => this.normalizeRecipeName(recipe.name) === normalizedRecipeName
-      );
-      if (
-        matchingNewRecipe?.mealTypes?.length &&
-        !matchingNewRecipe.mealTypes.includes(meal.mealSlot)
-      ) {
-        if (!options.allowIncompatibleSlots) {
+      if (this.requiresCompleteMainMeal(meal.mealSlot)) {
+        const nutritionTags = new Set(
+          meal.items.flatMap((item) => item.nutritionTags ?? [])
+        );
+        if (nutritionTags.size === 0) {
           issues.push({
-            code: "new_recipe_incompatible_slot",
-            message: `La nuova ricetta "${matchingNewRecipe.name}" non è compatibile con ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)}.`,
+            code: "meal_missing_nutrition",
+            message: `Lo slot ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non specifica carboidrati, proteine e grassi nelle componenti del pasto.`,
             dayOfWeek: meal.dayOfWeek,
-            mealSlot: meal.mealSlot,
-            recipeName: matchingNewRecipe.name
+            mealSlot: meal.mealSlot
+          });
+        } else if (
+          !nutritionTags.has("carb") ||
+          !nutritionTags.has("protein") ||
+          !nutritionTags.has("fat")
+        ) {
+          issues.push({
+            code: "meal_missing_nutrition",
+            message: `Lo slot ${this.describeSlot(meal.dayOfWeek, meal.mealSlot)} non risulta completo: servono carboidrati, proteine e grassi buoni tra le componenti proposte.`,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot
           });
         }
       }
@@ -1234,6 +1319,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: compare più di una volta. Mantieni una sola proposta valida.`;
         case "slot_not_requested":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: non era stato richiesto. Rimuovilo dal piano finale.`;
+        case "meal_missing_items":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: lo slot deve contenere almeno una componente nel campo items.`;
+        case "meal_missing_nutrition":
+          return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il pasto principale deve risultare completo con carboidrati, proteine e grassi buoni, distribuiti tra una o più componenti e dichiarati con nutritionTags.`;
         case "unknown_recipe_id":
           return `- ${this.describeSlot(issue.dayOfWeek!, issue.mealSlot!)}: il recipeId di "${issue.recipeName}" non è valido. Usa una ricetta esistente corretta oppure trattala come nuova ricetta coerente.`;
         case "new_recipe_missing":
@@ -1303,6 +1392,10 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
   private getSlotKey(dayOfWeek: number, mealSlot: MealSlot) {
     return `${dayOfWeek}-${mealSlot}`;
+  }
+
+  private requiresCompleteMainMeal(mealSlot: MealSlot) {
+    return mealSlot === "lunch" || mealSlot === "dinner";
   }
 
   private normalizeSlots(slots: { dayOfWeek: number; mealSlot: MealSlot }[]) {

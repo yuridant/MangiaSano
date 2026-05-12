@@ -34,6 +34,10 @@ function sortMealPlans(meals: AiMealPlan[]) {
   });
 }
 
+function describeMeal(meal: MenuMeal) {
+  return meal.items.map((item) => item.recipe?.name ?? item.customName ?? "—").join(" + ");
+}
+
 export function GeneratePage() {
   const { token, activeFamilyId } = useAuth();
   const navigate = useNavigate();
@@ -261,20 +265,24 @@ export function GeneratePage() {
     id: `${meal.dayOfWeek}-${meal.mealSlot}`,
     dayOfWeek: meal.dayOfWeek,
     mealSlot: meal.mealSlot,
-    recipeId: meal.recipeId ?? null,
-    customName: meal.recipeName,
-    recipe: meal.recipeId
-      ? ({
-          id: meal.recipeId,
-          name: meal.recipeName,
-          description: meal.recipeDescription ?? null,
-          mealTypes: [meal.mealSlot],
-          familyId: activeFamilyId ?? "",
-          createdAt: "",
-          updatedAt: "",
-          ingredients: []
-        } as MenuMeal["recipe"])
-      : null
+    items: meal.items.map((item, index) => ({
+      id: `${meal.dayOfWeek}-${meal.mealSlot}-${index}`,
+      recipeId: item.recipeId ?? null,
+      customName: item.recipeName,
+      sortOrder: index,
+      recipe: item.recipeId
+        ? {
+            id: item.recipeId,
+            name: item.recipeName,
+            description: item.recipeDescription ?? null,
+            mealTypes: [meal.mealSlot],
+            familyId: activeFamilyId ?? "",
+            createdAt: "",
+            updatedAt: "",
+            ingredients: []
+          }
+        : null
+    }))
   }));
   const flaggedSlots = new Map<string, string[]>();
   for (const issue of validationIssues) {
@@ -646,7 +654,7 @@ export function GeneratePage() {
                     <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600">
                       {entry.meals.map((meal) => (
                         <p key={meal.id}>
-                          {SLOT_LABELS[meal.mealSlot]}: {meal.recipe?.name ?? meal.customName ?? "—"}
+                          {SLOT_LABELS[meal.mealSlot]}: {describeMeal(meal)}
                         </p>
                       ))}
                     </div>

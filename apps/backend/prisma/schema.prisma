@@ -130,7 +130,7 @@ model Recipe {
   createdBy User   @relation("RecipeCreatedBy", fields: [createdById], references: [id])
 
   ingredients RecipeIngredient[]
-  menuMeals   MenuMeal[]
+  menuMealItems MenuMealItem[]
 
   @@unique([name, familyId])
 }
@@ -162,15 +162,26 @@ model WeeklyMenu {
 model MenuMeal {
   id           String   @id @default(cuid())
   weeklyMenuId String
-  recipeId     String?
-  customName   String?
   dayOfWeek    Int
   mealSlot     MealSlot
 
   weeklyMenu WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
-  recipe     Recipe?    @relation(fields: [recipeId], references: [id])
+  items      MenuMealItem[]
 
   @@unique([weeklyMenuId, dayOfWeek, mealSlot])
+}
+
+model MenuMealItem {
+  id         String   @id @default(cuid())
+  menuMealId String
+  recipeId   String?
+  customName String?
+  sortOrder  Int      @default(0)
+
+  menuMeal MenuMeal @relation(fields: [menuMealId], references: [id], onDelete: Cascade)
+  recipe   Recipe?   @relation(fields: [recipeId], references: [id])
+
+  @@index([menuMealId, sortOrder])
 }
 
 model ShoppingList {

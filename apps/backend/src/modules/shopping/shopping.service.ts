@@ -69,12 +69,17 @@ export class ShoppingService {
       include: {
         meals: {
           include: {
-            recipe: {
+            items: {
               include: {
-                ingredients: { include: { ingredient: true } }
+                recipe: {
+                  include: {
+                    ingredients: { include: { ingredient: true } }
+                  }
+                }
               }
             }
-          }
+          },
+          orderBy: [{ dayOfWeek: "asc" }, { mealSlot: "asc" }]
         },
         shoppingLists: {
           where: { familyId },
@@ -94,18 +99,22 @@ export class ShoppingService {
     weeklyMenuId: string,
     familyId: string,
     meals: {
-      recipe: {
-        ingredients: {
-          ingredient: { id: string; name: string; category: string | null };
-        }[];
-      } | null;
+      items: {
+        recipe: {
+          ingredients: {
+            ingredient: { id: string; name: string; category: string | null };
+          }[];
+        } | null;
+      }[];
     }[]
   ) {
     const ingredientMap = new Map<string, { id: string; name: string; category: string | null }>();
     for (const meal of meals) {
-      if (!meal.recipe) continue;
-      for (const ri of meal.recipe.ingredients) {
-        ingredientMap.set(ri.ingredient.id, ri.ingredient);
+      for (const item of meal.items) {
+        if (!item.recipe) continue;
+        for (const ri of item.recipe.ingredients) {
+          ingredientMap.set(ri.ingredient.id, ri.ingredient);
+        }
       }
     }
 

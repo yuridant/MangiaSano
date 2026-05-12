@@ -6,8 +6,28 @@ import { WeekNavigator } from "../components/menu/WeekNavigator";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { formatDateKey, getMonday } from "../lib/week";
-import type { MealSlot, Recipe, WeeklyMenu } from "../types";
+import type { MealSlot, MenuMeal, Recipe, WeeklyMenu } from "../types";
 import { DAYS_FULL, SLOT_LABELS } from "../types";
+
+type EditableMealItem = {
+  id: string;
+  mode: "recipe" | "custom";
+  recipeId: string;
+  customName: string;
+};
+
+function createEmptyMealItem(mode: EditableMealItem["mode"] = "recipe"): EditableMealItem {
+  return {
+    id: crypto.randomUUID(),
+    mode,
+    recipeId: "",
+    customName: ""
+  };
+}
+
+function describeMeal(meal: MenuMeal) {
+  return meal.items.map((item) => item.recipe?.name ?? item.customName ?? "—").join(" + ");
+}
 
 export function MenuPage() {
   const { token, activeFamilyId } = useAuth();
@@ -22,9 +42,7 @@ export function MenuPage() {
   const weekStart = formatDateKey(currentWeek);
   const [dayOfWeek, setDayOfWeek] = useState(0);
   const [mealSlot, setMealSlot] = useState<MealSlot>("lunch");
-  const [mode, setMode] = useState<"recipe" | "custom">("recipe");
-  const [recipeId, setRecipeId] = useState("");
-  const [customName, setCustomName] = useState("");
+  const [mealItems, setMealItems] = useState<EditableMealItem[]>([createEmptyMealItem()]);
   const [manualError, setManualError] = useState("");
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
@@ -59,9 +77,7 @@ export function MenuPage() {
   const resetManualForm = () => {
     setDayOfWeek(0);
     setMealSlot("lunch");
-    setMode("recipe");
-    setRecipeId("");
-    setCustomName("");
+    setMealItems([createEmptyMealItem()]);
     setManualError("");
     setEditingMealId(null);
     setManualModalOpen(false);
@@ -75,20 +91,29 @@ export function MenuPage() {
 
   const saveMealMutation = useMutation({
     mutationFn: async () => {
-      if (mode === "recipe" && !recipeId) {
-        throw new Error("Seleziona una ricetta da inserire nel menu.");
+      if (mealItems.length === 0) {
+        throw new Error("Inserisci almeno una componente del pasto.");
       }
-      if (mode === "custom" && !customName.trim()) {
-        throw new Error("Inserisci un nome per il pasto manuale.");
-      }
+
+      const normalizedItems = mealItems.map((item, index) => {
+        if (item.mode === "recipe" && !item.recipeId) {
+          throw new Error(`Seleziona una ricetta per la componente ${index + 1}.`);
+        }
+        if (item.mode === "custom" && !item.customName.trim()) {
+          throw new Error(`Inserisci un nome per la componente ${index + 1}.`);
+        }
+
+        return item.mode === "recipe"
+          ? { recipeId: item.recipeId }
+          : { customName: item.customName.trim() };
+      });
 
       return api.post(
         `/menus/${weekStart}/meals?familyId=${activeFamilyId}`,
         {
           dayOfWeek,
           mealSlot,
-          recipeId: mode === "recipe" ? recipeId : undefined,
-          customName: mode === "custom" ? customName.trim() : undefined
+          items: normalizedItems
         },
         token!
       );
@@ -139,15 +164,16 @@ export function MenuPage() {
     setDayOfWeek(meal.dayOfWeek);
     setMealSlot(meal.mealSlot);
     setEditingMealId(meal.id);
-    if (meal.recipeId && meal.recipe) {
-      setMode("recipe");
-      setRecipeId(meal.recipeId);
-      setCustomName("");
-    } else {
-      setMode("custom");
-      setRecipeId("");
-      setCustomName(meal.customName ?? "");
-    }
+    setMealItems(
+      meal.items.length > 0
+        ? meal.items.map((item) => ({
+            id: item.id,
+            mode: item.recipeId && item.recipe ? "recipe" : "custom",
+            recipeId: item.recipeId ?? "",
+            customName: item.customName ?? ""
+          }))
+        : [createEmptyMealItem()]
+    );
     setManualError("");
     setManualModalOpen(true);
   };
@@ -180,7 +206,6 @@ export function MenuPage() {
           </Link>
         </div>
 
-        {/* Week navigator */}
         <WeekNavigator weekStart={weekStart} onChangeWeekStart={(nextWeekStart) => setSearchParams({ weekStart: nextWeekStart })} />
       </div>
 
@@ -245,9 +270,7 @@ export function MenuPage() {
 
             setDayOfWeek(nextDayOfWeek);
             setMealSlot(nextMealSlot);
-            setMode("recipe");
-            setRecipeId("");
-            setCustomName("");
+            setMealItems([createEmptyMealItem()]);
             setManualError("");
             setEditingMealId(null);
             setManualModalOpen(true);
@@ -257,7 +280,7 @@ export function MenuPage() {
 
       {manualModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
-          <div className="w-full max-w-lg rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
+          <div className="w-full max-w-2xl rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
@@ -279,49 +302,112 @@ export function MenuPage() {
             <div className="mt-5 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setMode("recipe")}
-                className={`app-btn-xs ${mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
+                onClick={() => setMealItems((prev) => [...prev, createEmptyMealItem("recipe")])}
+                className="app-btn-xs app-btn-secondary"
               >
-                Usa una ricetta esistente
+                + Ricetta
               </button>
               <button
                 type="button"
-                onClick={() => setMode("custom")}
-                className={`app-btn-xs ${mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
+                onClick={() => setMealItems((prev) => [...prev, createEmptyMealItem("custom")])}
+                className="app-btn-xs app-btn-secondary"
               >
-                Inserisci un pasto manuale
+                + Voce manuale
               </button>
             </div>
 
-            <div className="mt-5">
-              {mode === "recipe" ? (
-                <label className="flex flex-col gap-1 text-sm text-slate-600">
-                  Ricetta
-                  <select
-                    value={recipeId}
-                    onChange={(e) => setRecipeId(e.target.value)}
-                    className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-                  >
-                    <option value="">Seleziona una ricetta</option>
-                    {recipeOptions.map((recipe) => (
-                      <option key={recipe.id} value={recipe.id}>
-                        {recipe.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <label className="flex flex-col gap-1 text-sm text-slate-600">
-                  Nome del pasto
-                  <input
-                    type="text"
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    placeholder="Es. Toast integrale con hummus"
-                    className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
-                  />
-                </label>
-              )}
+            <div className="mt-5 flex max-h-[50vh] flex-col gap-4 overflow-y-auto pr-1">
+              {mealItems.map((item, index) => (
+                <div key={item.id} className="rounded-3xl border border-slate-200 bg-white/75 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-ink">Componente {index + 1}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMealItems((prev) =>
+                            prev.map((current) =>
+                              current.id === item.id
+                                ? { ...current, mode: "recipe", customName: "" }
+                                : current
+                            )
+                          )
+                        }
+                        className={`app-btn-xs ${item.mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
+                      >
+                        Ricetta
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMealItems((prev) =>
+                            prev.map((current) =>
+                              current.id === item.id
+                                ? { ...current, mode: "custom", recipeId: "" }
+                                : current
+                            )
+                          )
+                        }
+                        className={`app-btn-xs ${item.mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
+                      >
+                        Manuale
+                      </button>
+                      {mealItems.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setMealItems((prev) => prev.filter((current) => current.id !== item.id))}
+                          className="app-btn-xs app-btn-secondary text-rose-600"
+                        >
+                          Rimuovi
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    {item.mode === "recipe" ? (
+                      <label className="flex flex-col gap-1 text-sm text-slate-600">
+                        Ricetta
+                        <select
+                          value={item.recipeId}
+                          onChange={(e) =>
+                            setMealItems((prev) =>
+                              prev.map((current) =>
+                                current.id === item.id ? { ...current, recipeId: e.target.value } : current
+                              )
+                            )
+                          }
+                          className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                        >
+                          <option value="">Seleziona una ricetta</option>
+                          {recipeOptions.map((recipe) => (
+                            <option key={recipe.id} value={recipe.id}>
+                              {recipe.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="flex flex-col gap-1 text-sm text-slate-600">
+                        Nome della componente
+                        <input
+                          type="text"
+                          value={item.customName}
+                          onChange={(e) =>
+                            setMealItems((prev) =>
+                              prev.map((current) =>
+                                current.id === item.id ? { ...current, customName: e.target.value } : current
+                              )
+                            )
+                          }
+                          placeholder="Es. Insalata verde con olio EVO"
+                          className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
 
             <p className="mt-4 text-xs text-slate-500">

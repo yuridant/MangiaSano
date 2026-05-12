@@ -28,12 +28,17 @@ export class MenusService {
       include: {
         meals: {
           include: {
-            recipe: {
+            items: {
               include: {
-                ingredients: {
-                  include: { ingredient: { select: { id: true, name: true, category: true } } }
+                recipe: {
+                  include: {
+                    ingredients: {
+                      include: { ingredient: { select: { id: true, name: true, category: true } } }
+                    }
+                  }
                 }
-              }
+              },
+              orderBy: { sortOrder: "asc" }
             }
           },
           orderBy: [{ dayOfWeek: "asc" }, { mealSlot: "asc" }]
@@ -56,17 +61,25 @@ export class MenusService {
     userId: string,
     familyId: string,
     weekStart: string,
-    data: { dayOfWeek: number; mealSlot: MealSlot; recipeId?: string; customName?: string }
+    data: { dayOfWeek: number; mealSlot: MealSlot; items: { recipeId?: string; customName?: string }[] }
   ) {
     await this.families.requireMembership(userId, familyId);
 
-    if (data.recipeId) {
-      const recipe = await this.prisma.recipe.findUnique({
-        where: { id: data.recipeId },
-        select: { id: true, familyId: true }
-      });
-      if (!recipe || recipe.familyId !== familyId) {
-        throw new BadRequestException("La ricetta selezionata non appartiene alla famiglia attiva.");
+    const recipeIds = data.items
+      .map((item) => item.recipeId)
+      .filter((value): value is string => Boolean(value));
+
+    if (recipeIds.length > 0) {
+      const allowedRecipeIds = new Set(
+        (
+          await this.prisma.recipe.findMany({
+            where: { familyId, id: { in: recipeIds } },
+            select: { id: true }
+          })
+        ).map((recipe) => recipe.id)
+      );
+      if (allowedRecipeIds.size !== new Set(recipeIds).size) {
+        throw new BadRequestException("Una o più ricette selezionate non appartengono alla famiglia attiva.");
       }
     }
 
@@ -77,26 +90,50 @@ export class MenusService {
       update: {}
     });
 
-    return this.prisma.menuMeal.upsert({
-      where: {
-        weeklyMenuId_dayOfWeek_mealSlot: {
+    return this.prisma.$transaction(async (tx) => {
+      const meal = await tx.menuMeal.upsert({
+        where: {
+          weeklyMenuId_dayOfWeek_mealSlot: {
+            weeklyMenuId: menu.id,
+            dayOfWeek: data.dayOfWeek,
+            mealSlot: data.mealSlot
+          }
+        },
+        create: {
           weeklyMenuId: menu.id,
           dayOfWeek: data.dayOfWeek,
           mealSlot: data.mealSlot
+        },
+        update: {}
+      });
+
+      await tx.menuMealItem.deleteMany({ where: { menuMealId: meal.id } });
+      await tx.menuMealItem.createMany({
+        data: data.items.map((item, index) => ({
+          menuMealId: meal.id,
+          recipeId: item.recipeId || null,
+          customName: item.customName?.trim() || null,
+          sortOrder: index
+        }))
+      });
+
+      return tx.menuMeal.findUniqueOrThrow({
+        where: { id: meal.id },
+        include: {
+          items: {
+            include: {
+              recipe: {
+                include: {
+                  ingredients: {
+                    include: { ingredient: { select: { id: true, name: true, category: true } } }
+                  }
+                }
+              }
+            },
+            orderBy: { sortOrder: "asc" }
+          }
         }
-      },
-      create: {
-        weeklyMenuId: menu.id,
-        dayOfWeek: data.dayOfWeek,
-        mealSlot: data.mealSlot,
-        recipeId: data.recipeId || null,
-        customName: data.customName?.trim() || null
-      },
-      update: {
-        recipeId: data.recipeId || null,
-        customName: data.customName?.trim() || null
-      },
-      include: { recipe: { select: { id: true, name: true } } }
+      });
     });
   }
 
@@ -120,19 +157,22 @@ export class MenusService {
     userId: string,
     familyId: string,
     weekStart: string,
-    meals: { dayOfWeek: number; mealSlot: MealSlot; recipeId: string }[]
+    meals: { dayOfWeek: number; mealSlot: MealSlot; items: { recipeId?: string; customName?: string }[] }[]
   ) {
     await this.families.requireMembership(userId, familyId);
 
+    const requestedRecipeIds = meals.flatMap((meal) =>
+      meal.items.map((item) => item.recipeId).filter((value): value is string => Boolean(value))
+    );
     const allowedRecipeIds = new Set(
       (
         await this.prisma.recipe.findMany({
-          where: { familyId, id: { in: meals.map((meal) => meal.recipeId) } },
+          where: { familyId, id: { in: requestedRecipeIds } },
           select: { id: true }
         })
       ).map((recipe) => recipe.id)
     );
-    if (allowedRecipeIds.size !== new Set(meals.map((meal) => meal.recipeId)).size) {
+    if (allowedRecipeIds.size !== new Set(requestedRecipeIds).size) {
       throw new BadRequestException("Il menu contiene ricette non valide per la famiglia attiva.");
     }
 
@@ -143,21 +183,35 @@ export class MenusService {
       update: {}
     });
 
-    await this.prisma.$transaction(
-      meals.map((meal) =>
-        this.prisma.menuMeal.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      for (const meal of meals) {
+        const savedMeal = await tx.menuMeal.upsert({
           where: {
             weeklyMenuId_dayOfWeek_mealSlot: {
               weeklyMenuId: menu.id,
               dayOfWeek: meal.dayOfWeek,
               mealSlot: meal.mealSlot
-          }
+            }
           },
-          create: { weeklyMenuId: menu.id, ...meal },
-          update: { recipeId: meal.recipeId, customName: null }
-        })
-      )
-    );
+          create: {
+            weeklyMenuId: menu.id,
+            dayOfWeek: meal.dayOfWeek,
+            mealSlot: meal.mealSlot
+          },
+          update: {}
+        });
+
+        await tx.menuMealItem.deleteMany({ where: { menuMealId: savedMeal.id } });
+        await tx.menuMealItem.createMany({
+          data: meal.items.map((item, index) => ({
+            menuMealId: savedMeal.id,
+            recipeId: item.recipeId || null,
+            customName: item.customName?.trim() || null,
+            sortOrder: index
+          }))
+        });
+      }
+    });
 
     return this.getWeek(userId, familyId, weekStart);
   }

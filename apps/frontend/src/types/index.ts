@@ -46,13 +46,19 @@ export interface Recipe {
   ingredients: RecipeIngredient[];
 }
 
+export interface MenuMealItem {
+  id: string;
+  recipeId: string | null;
+  customName: string | null;
+  sortOrder: number;
+  recipe: Recipe | null;
+}
+
 export interface MenuMeal {
   id: string;
   dayOfWeek: number;
   mealSlot: MealSlot;
-  recipeId: string | null;
-  customName: string | null;
-  recipe: Recipe | null;
+  items: MenuMealItem[];
 }
 
 export interface WeeklyMenu {
@@ -101,12 +107,19 @@ export interface FamilyDetail {
   pendingInvitations: FamilyInvitation[];
 }
 
-export interface AiMealPlan {
-  dayOfWeek: number;
-  mealSlot: MealSlot;
+export type AiNutritionTag = "carb" | "protein" | "fat" | "vegetable";
+
+export interface AiMealItem {
   recipeId?: string;
   recipeName: string;
   recipeDescription?: string;
+  nutritionTags?: AiNutritionTag[];
+}
+
+export interface AiMealPlan {
+  dayOfWeek: number;
+  mealSlot: MealSlot;
+  items: AiMealItem[];
 }
 
 export interface AiResponse {

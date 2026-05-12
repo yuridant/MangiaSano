@@ -74,9 +74,9 @@ export class AnalyticsService {
   }
 
   private async getTopRecipes(familyId: string) {
-    const results = await this.prisma.menuMeal.groupBy({
+    const results = await this.prisma.menuMealItem.groupBy({
       by: ["recipeId"],
-      where: { weeklyMenu: { familyId }, recipeId: { not: null } },
+      where: { menuMeal: { weeklyMenu: { familyId } }, recipeId: { not: null } },
       _count: { recipeId: true },
       orderBy: { _count: { recipeId: "desc" } },
       take: 10
@@ -99,9 +99,10 @@ export class AnalyticsService {
   private async getTopIngredients(familyId: string) {
     const results = await this.prisma.$queryRaw<{ ingredientId: string; name: string; count: bigint }[]>`
       SELECT i.id as "ingredientId", i.name, COUNT(*)::int as count
-      FROM "MenuMeal" mm
+      FROM "MenuMealItem" mmi
+      JOIN "MenuMeal" mm ON mm.id = mmi."menuMealId"
       JOIN "WeeklyMenu" wm ON wm.id = mm."weeklyMenuId"
-      JOIN "RecipeIngredient" ri ON ri."recipeId" = mm."recipeId"
+      JOIN "RecipeIngredient" ri ON ri."recipeId" = mmi."recipeId"
       JOIN "Ingredient" i ON i.id = ri."ingredientId"
       WHERE wm."familyId" = ${familyId}
       GROUP BY i.id, i.name

@@ -1,6 +1,12 @@
 import type { MealSlot, MenuMeal, WeeklyMenu } from "../../types";
 import { DAYS, SLOT_LABELS, SLOTS } from "../../types";
 
+function getMealItemLabel(meal: MenuMeal) {
+  return meal.items
+    .map((item) => item.recipe?.name ?? item.customName ?? "—")
+    .filter(Boolean);
+}
+
 interface WeekGridProps {
   menu?: WeeklyMenu | null;
   meals?: MenuMeal[];
@@ -46,6 +52,7 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, flaggedSlots, 
               const meal = mealsByDayAndSlot.get(`${dayIndex}-${slot}`);
               const slotKey = `${dayIndex}-${slot}`;
               const isFilled = Boolean(meal);
+              const itemLabels = meal ? getMealItemLabel(meal) : [];
               const isSelected = selectedSlots?.has(slotKey) ?? false;
               const isFlagged = (flaggedSlots?.get(slotKey)?.length ?? 0) > 0;
               const cellClasses = isFlagged
@@ -73,9 +80,16 @@ export function WeekGrid({ menu, meals, weekStart, selectedSlots, flaggedSlots, 
                   {meal ? (
                     <div className="flex h-full flex-col items-center justify-center gap-1">
                       {isFlagged && <span className="text-[10px] font-bold uppercase tracking-wide">Da verificare</span>}
-                      <span className="line-clamp-3 text-[11px] font-semibold leading-tight">
-                        {meal.recipe?.name ?? meal.customName ?? "—"}
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        {itemLabels.slice(0, 3).map((label, index) => (
+                          <span key={`${slotKey}-${index}`} className="line-clamp-1 text-[11px] font-semibold leading-tight">
+                            {label}
+                          </span>
+                        ))}
+                        {itemLabels.length > 3 && (
+                          <span className="text-[10px] opacity-80">+{itemLabels.length - 3} altre</span>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <span className="text-base leading-none">{isSelected ? "✓" : isFlagged ? "!" : "+"}</span>
