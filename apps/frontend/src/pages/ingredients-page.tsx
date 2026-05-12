@@ -46,17 +46,49 @@ export function IngredientsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
       api.delete(`/ingredients/${id}?familyId=${activeFamilyId}`, token!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ingredients", activeFamilyId] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ingredients", activeFamilyId] });
+      setError("");
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Errore durante l'eliminazione")
   });
 
   const bulkDeleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => api.delete(`/ingredients/${id}?familyId=${activeFamilyId}`, token!)));
+      const results = await Promise.allSettled(
+        ids.map(async (id) => {
+          await api.delete(`/ingredients/${id}?familyId=${activeFamilyId}`, token!);
+          return id;
+        })
+      );
+      return {
+        deletedIds: results
+          .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled")
+          .map((result) => result.value),
+        failures: results
+          .map((result, index) => ({ result, id: ids[index] }))
+          .filter(
+            (entry): entry is { result: PromiseRejectedResult; id: string } => entry.result.status === "rejected"
+          )
+          .map((entry) => ({
+            id: entry.id,
+            message: entry.result.reason instanceof Error ? entry.result.reason.message : "Errore durante l'eliminazione"
+          }))
+      };
     },
-    onSuccess: () => {
+    onSuccess: ({ deletedIds, failures }) => {
       queryClient.invalidateQueries({ queryKey: ["ingredients", activeFamilyId] });
-      setSelectedIngredientIds([]);
-      setSelectionMode(false);
+      setSelectedIngredientIds(failures.map((failure) => failure.id));
+      if (failures.length === 0) {
+        setSelectionMode(false);
+        setError("");
+        return;
+      }
+      const deletedCount = deletedIds.length;
+      const failureMessages = [...new Set(failures.map((failure) => failure.message))];
+      setError(
+        `${deletedCount > 0 ? `${deletedCount} ingredienti eliminati. ` : ""}${failures.length} non eliminati. ${failureMessages.join(" ")}`
+      );
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Errore durante l'eliminazione")
   });
@@ -72,6 +104,7 @@ export function IngredientsPage() {
   const toggleSelectionMode = () => {
     setSelectionMode((current) => !current);
     setSelectedIngredientIds([]);
+    setError("");
   };
 
   const toggleIngredientSelection = (ingredientId: string) => {

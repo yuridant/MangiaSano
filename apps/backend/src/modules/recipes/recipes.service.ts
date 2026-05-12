@@ -106,7 +106,14 @@ export class RecipesService {
   async remove(userId: string, familyId: string, recipeId: string) {
     await this.families.requireMembership(userId, familyId);
     await this.requireRecipe(recipeId, familyId);
-    await this.prisma.recipe.delete({ where: { id: recipeId } });
+    try {
+      await this.prisma.recipe.delete({ where: { id: recipeId } });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+        throw new ConflictException("Questa ricetta non può essere eliminata perché è ancora usata in uno o più menu.");
+      }
+      throw error;
+    }
     return { success: true };
   }
 

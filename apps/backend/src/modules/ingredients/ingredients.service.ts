@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FamiliesService } from "../families/families.service";
 
@@ -53,7 +54,14 @@ export class IngredientsService {
   async remove(userId: string, familyId: string, ingredientId: string) {
     await this.families.requireMembership(userId, familyId);
     await this.requireIngredient(ingredientId, familyId);
-    await this.prisma.ingredient.delete({ where: { id: ingredientId } });
+    try {
+      await this.prisma.ingredient.delete({ where: { id: ingredientId } });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+        throw new ConflictException("Questo ingrediente non può essere eliminato perché è ancora collegato a una o più ricette.");
+      }
+      throw error;
+    }
     return { success: true };
   }
 
