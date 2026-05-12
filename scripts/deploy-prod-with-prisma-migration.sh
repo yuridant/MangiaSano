@@ -70,6 +70,8 @@ if [[ -z "$MIGRATION_FILE" || ! -f "$MIGRATION_FILE" ]]; then
   exit 1
 fi
 
+MIGRATION_ID="$(basename "$(dirname "$MIGRATION_FILE")")/$(basename "$MIGRATION_FILE")"
+
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -96,6 +98,28 @@ for attempt in $(seq 1 30); do
 done
 
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
-  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$MIGRATION_FILE"
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<SQL
+CREATE TABLE IF NOT EXISTS "_ManualSqlMigration" (
+  "migrationId" TEXT PRIMARY KEY,
+  "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+SQL
+
+ALREADY_APPLIED="$(
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
+    psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -c "SELECT COUNT(*) FROM \"_ManualSqlMigration\" WHERE \"migrationId\" = '$MIGRATION_ID';"
+)"
+
+if [[ "$ALREADY_APPLIED" == "0" ]]; then
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$MIGRATION_FILE"
+
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -c "INSERT INTO \"_ManualSqlMigration\" (\"migrationId\") VALUES ('$MIGRATION_ID') ON CONFLICT (\"migrationId\") DO NOTHING;"
+else
+  echo "Skipping already applied migration: $MIGRATION_ID"
+fi
 
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build
