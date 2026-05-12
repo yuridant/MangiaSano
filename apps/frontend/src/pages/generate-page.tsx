@@ -283,7 +283,8 @@ export function GeneratePage() {
               mealSlot: mealSlot as MealSlot
             };
           }),
-          goal
+          goal,
+          sourceGenerationId: generationMeta?.generationId ?? undefined
         },
         token!
       ),

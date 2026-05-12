@@ -13,7 +13,8 @@ const generateSchema = z.object({
       mealSlot: mealSlotSchema
     })
   ),
-  goal: z.string().default("Piano equilibrato con riduzione picchi glicemici")
+  goal: z.string().default("Piano equilibrato con riduzione picchi glicemici"),
+  sourceGenerationId: z.string().optional()
 });
 
 const applySchema = z.object({
@@ -44,8 +45,8 @@ export class AiController {
 
   @Post("generate")
   generate(@Req() req: AuthedRequest, @Query("familyId") familyId: string, @Body() body: unknown) {
-    const { weekStart, slots, goal } = generateSchema.parse(body);
-    return this.aiService.generate(req.user.id, familyId, weekStart, slots, goal);
+    const { weekStart, slots, goal, sourceGenerationId } = generateSchema.parse(body);
+    return this.aiService.generate(req.user.id, familyId, weekStart, slots, goal, sourceGenerationId);
   }
 
   @Get("generate/:generationId")

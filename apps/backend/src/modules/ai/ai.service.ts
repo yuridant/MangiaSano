@@ -217,6 +217,16 @@ interface AiCorrectionResolution {
   lastResponseId: string | null;
 }
 
+interface PlannedWeekCorrectionResolution {
+  result: AiPlannedWeek;
+  correctionAttempts: number;
+  reachedLimit: boolean;
+  issues: AiValidationIssue[];
+  notes: string[];
+  correctionUsages: UsageTotals[];
+  lastResponseId: string | null;
+}
+
 interface AiRecipeResolutionStats {
   reusedExistingRecipes: number;
   createdNewRecipes: number;
@@ -290,7 +300,8 @@ export class AiService {
     familyId: string,
     weekStart: string,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
-    goal: string
+    goal: string,
+    sourceGenerationId?: string
   ) {
     await this.families.requireMembership(userId, familyId);
     const generationId = await this.createPendingGenerationLog({
@@ -306,7 +317,8 @@ export class AiService {
       familyId,
       weekStart,
       slots,
-      goal
+      goal,
+      sourceGenerationId
     });
 
     return {
@@ -362,6 +374,7 @@ export class AiService {
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     goal: string
     generationId: string;
+    sourceGenerationId?: string;
   }) {
     try {
       await this.executeGeneration(
@@ -370,7 +383,8 @@ export class AiService {
         params.weekStart,
         params.slots,
         params.goal,
-        params.generationId
+        params.generationId,
+        params.sourceGenerationId
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Errore imprevisto";
@@ -388,11 +402,15 @@ export class AiService {
     weekStart: string,
     slots: { dayOfWeek: number; mealSlot: MealSlot }[],
     goal: string,
-    existingGenerationId?: string
+    existingGenerationId?: string,
+    sourceGenerationId?: string
   ): Promise<AiGenerateResult> {
     await this.families.requireMembership(userId, familyId);
     const startedAt = Date.now();
     const normalizedSlots = this.normalizeSlots(slots);
+    const sourceConversationResponseId = sourceGenerationId
+      ? await this.getSourceConversationResponseId(userId, familyId, sourceGenerationId)
+      : null;
 
     const [family, recipes, ingredients, modelSelection] = await Promise.all([
       this.prisma.family.findUniqueOrThrow({
@@ -462,6 +480,7 @@ export class AiService {
         model,
         instructions: SYSTEM_PROMPT,
         input: plannerMessage,
+        previousResponseId: sourceConversationResponseId,
         schema: aiPlannedWeekSchema,
         schemaName: "weekly_menu_structure",
         temperature: 0.7
@@ -473,6 +492,7 @@ export class AiService {
         initialResponse: plannerPhase.parsed,
         requestedSlots: normalizedSlots
       });
+      let conversationResponseId = plannerValidation.lastResponseId ?? plannerPhase.responseId;
 
       if (existingGenerationId) {
         await this.updateGenerationJobState(existingGenerationId, {
@@ -515,10 +535,12 @@ export class AiService {
           goal,
           dietaryProfile,
           plannedWeek: plannerValidation.result,
-          dayContext
+          dayContext,
+          previousResponseId: conversationResponseId
         });
         phaseUsages.push(dayFill.usage);
         combinedResult = this.mergeAiResponses(combinedResult, dayFill.parsed);
+        conversationResponseId = dayFill.responseId ?? conversationResponseId;
       }
 
       let finalResponse = combinedResult;
@@ -550,7 +572,7 @@ export class AiService {
       if (!finalValidation.ok) {
         const repairedResult = await this.resolveAiResponseWithCorrections({
           model,
-          initialResponseId: null,
+          initialResponseId: conversationResponseId,
           initialResponse: combinedResult,
           existingRecipes: recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, mealTypes: recipe.mealTypes })),
           requestedSlots: normalizedSlots,
@@ -569,6 +591,7 @@ export class AiService {
         openaiResponseId = repairedResult.lastResponseId ?? undefined;
       } else {
         finalResponse = finalValidation.result;
+        openaiResponseId = conversationResponseId ?? undefined;
       }
 
       const generationId = await this.persistGenerationLog(existingGenerationId, {
@@ -1383,14 +1406,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     initialResponseId: string | null;
     initialResponse: AiPlannedWeek;
     requestedSlots: { dayOfWeek: number; mealSlot: MealSlot }[];
-  }): Promise<{
-    result: AiPlannedWeek;
-    correctionAttempts: number;
-    reachedLimit: boolean;
-    issues: AiValidationIssue[];
-    notes: string[];
-    correctionUsages: UsageTotals[];
-  }> {
+  }): Promise<PlannedWeekCorrectionResolution> {
     let currentResponse = params.initialResponse;
     let previousResponseId = params.initialResponseId;
     let correctionAttempts = 0;
@@ -1406,7 +1422,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           reachedLimit: false,
           issues: [],
           notes,
-          correctionUsages
+          correctionUsages,
+          lastResponseId: previousResponseId
         };
       }
 
@@ -1418,7 +1435,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
           reachedLimit: true,
           issues: validation.issues,
           notes,
-          correctionUsages
+          correctionUsages,
+          lastResponseId: previousResponseId
         };
       }
 
@@ -1595,6 +1613,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
     plannedWeek: AiPlannedWeek;
     dayContext: DayFillContext;
+    previousResponseId?: string | null;
   }): Promise<PhaseGenerationResult<AiResponse>> {
     const daySections = this.buildDayFillPromptSections(params);
     const input = [
@@ -1613,6 +1632,7 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       model: params.model,
       instructions: SYSTEM_PROMPT,
       input,
+      previousResponseId: params.previousResponseId,
       schema: aiResponseSchema,
       schemaName: `weekly_menu_day_${params.dayContext.dayOfWeek}`,
       temperature: 0.5
@@ -1850,6 +1870,26 @@ Non aggiungere slot extra e non omettere slot richiesti per questo giorno.`
     });
 
     return existingGenerationId;
+  }
+
+  private async getSourceConversationResponseId(userId: string, familyId: string, sourceGenerationId: string) {
+    const sourceLog = await this.prisma.aiGenerationLog.findFirst({
+      where: {
+        id: sourceGenerationId,
+        userId,
+        familyId,
+        success: true
+      },
+      select: {
+        openaiResponseId: true
+      }
+    });
+
+    if (!sourceLog?.openaiResponseId) {
+      throw new BadRequestException("La generazione di origine non ha una conversazione AI riutilizzabile.");
+    }
+
+    return sourceLog.openaiResponseId;
   }
 
   private async buildCompactPromptContext(
