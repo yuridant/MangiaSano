@@ -363,6 +363,10 @@ export class AnalyticsService {
         cachedInputTokens: log.cachedInputTokens ?? 0,
         outputTokens: log.outputTokens ?? 0,
         totalTokens: log.totalTokens ?? 0,
+        estimatedPromptTokens:
+          ((log.requestBreakdown as { totals?: { tokens?: number } } | null)?.totals?.tokens ?? 0),
+        providerRequestedTokens:
+          ((log.responseBreakdown as { failure?: { providerRequestedTokens?: number } } | null)?.failure?.providerRequestedTokens ?? 0),
         estimatedTotalCostUsd: log.estimatedTotalCostUsd ?? 0,
         latencyMs: log.latencyMs ?? 0,
         correctionAttempts:
@@ -377,6 +381,16 @@ export class AnalyticsService {
               reusedExistingRecipes?: number;
               createdNewRecipes?: number;
               absorbedDuplicateRecipes?: number;
+            };
+            promptEstimate?: {
+              inputTokens?: number;
+            };
+            failure?: {
+              type?: string;
+              providerRequestedTokens?: number;
+              providerUsedTokens?: number;
+              providerTokenLimit?: number;
+              retryAfterSeconds?: number;
             };
           } | null) ?? null,
         requestBreakdown: log.requestBreakdown,

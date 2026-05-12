@@ -197,7 +197,7 @@ interface ModelSelection {
 }
 
 const MAX_AI_CORRECTION_ATTEMPTS = 3;
-const MAX_PROMPT_INPUT_TOKENS = 18000;
+const MAX_PROMPT_INPUT_TOKENS = 9000;
 const PROMPT_RECIPE_BUCKET_SHARE = 0.7;
 const PROMPT_RECIPE_BUCKET_SAMPLE_SHARE = 0.25;
 const DUPLICATE_NAME_SIMILARITY_THRESHOLD = 0.8;
@@ -293,7 +293,9 @@ export class AiService {
       promptSections.dietaryProfile,
       promptSections.requestedSlots,
       promptSections.rules
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const requestBreakdown = this.buildRequestBreakdown(model, {
       systemPrompt: SYSTEM_PROMPT,
       ...promptSections
@@ -368,6 +370,8 @@ export class AiService {
         result: validation.result
       };
     } catch (error) {
+      const failureBreakdown = this.buildFailureBreakdown(error, requestBreakdown);
+
       await this.logGeneration({
         userId,
         familyId,
@@ -379,6 +383,7 @@ export class AiService {
         existingRecipeCount: compactContext.existingRecipes.length,
         existingIngredientCount: compactContext.existingIngredients.length,
         requestBreakdown,
+        responseBreakdown: failureBreakdown,
         success: false,
         latencyMs: Date.now() - startedAt,
         errorMessage: error instanceof Error ? error.message : "Errore imprevisto"
@@ -958,11 +963,13 @@ export class AiService {
     counts: RequestBreakdown["counts"]
   ): RequestBreakdown {
     const encoder = this.getTokenizer(model);
-    const breakdownSections = Object.entries(sections).map(([name, value]) => ({
-      name,
-      chars: value.length,
-      tokens: encoder.encode(value).length
-    }));
+    const breakdownSections = Object.entries(sections)
+      .filter(([, value]) => Boolean(value))
+      .map(([name, value]) => ({
+        name,
+        chars: value.length,
+        tokens: encoder.encode(value).length
+      }));
     const totals = breakdownSections.reduce(
       (acc, section) => ({
         chars: acc.chars + section.chars,
@@ -1017,11 +1024,12 @@ export class AiService {
       includeDescription: boolean;
       ingredientNamesPerRecipe: number;
     }> = [
-      { recipeLimit: 160, ingredientLimit: 250, includeDescription: false, ingredientNamesPerRecipe: 5 },
-      { recipeLimit: 120, ingredientLimit: 180, includeDescription: false, ingredientNamesPerRecipe: 4 },
-      { recipeLimit: 80, ingredientLimit: 120, includeDescription: false, ingredientNamesPerRecipe: 3 },
-      { recipeLimit: 50, ingredientLimit: 80, includeDescription: false, ingredientNamesPerRecipe: 2 },
-      { recipeLimit: 30, ingredientLimit: 50, includeDescription: false, ingredientNamesPerRecipe: 0 }
+      { recipeLimit: 48, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 2 },
+      { recipeLimit: 36, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 2 },
+      { recipeLimit: 24, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 1 },
+      { recipeLimit: 16, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 1 },
+      { recipeLimit: 12, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 0 },
+      { recipeLimit: 8, ingredientLimit: 0, includeDescription: false, ingredientNamesPerRecipe: 0 }
     ];
 
     let chosenContext: CompactPromptContext = {
@@ -1100,6 +1108,8 @@ export class AiService {
     ingredientCategoryByName: Map<string, string | null>,
     ingredientLimit: number
   ) {
+    if (ingredientLimit <= 0) return [];
+
     const uniqueIngredients = new Map<string, PromptContextIngredient>();
 
     for (const recipe of recipes) {
@@ -1466,7 +1476,9 @@ export class AiService {
     return {
       goal: `Obiettivo nutrizionale: ${params.goal}`,
       existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id e rispettando SEMPRE i loro mealTypes quando presenti):\n${JSON.stringify(params.existingRecipes)}`,
-      existingIngredients: `Ingredienti già presenti nell'app:\n${JSON.stringify(params.existingIngredients)}`,
+      existingIngredients: params.existingIngredients.length > 0
+        ? `Ingredienti già presenti nell'app e coinvolti nel contesto selezionato:\n${JSON.stringify(params.existingIngredients)}`
+        : "",
       dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(params.dietaryProfile)}`,
       requestedSlots: `Genera un piano per questi slot: ${params.slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(params.slots)}`,
       rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
@@ -1587,6 +1599,42 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       estimatedInputCostUsd,
       estimatedOutputCostUsd,
       estimatedTotalCostUsd: Number((estimatedInputCostUsd + estimatedOutputCostUsd).toFixed(6))
+    };
+  }
+
+  private buildFailureBreakdown(error: unknown, requestBreakdown: RequestBreakdown) {
+    const breakdown: Record<string, unknown> = {
+      promptEstimate: {
+        inputTokens: requestBreakdown.totals.tokens,
+        sections: requestBreakdown.sections
+      }
+    };
+
+    if (error instanceof OpenAI.RateLimitError) {
+      breakdown.failure = {
+        type: "rate_limit",
+        ...(this.parseRateLimitMetadata(error.message) ?? {})
+      };
+    }
+
+    return breakdown;
+  }
+
+  private parseRateLimitMetadata(message: string) {
+    const requestedMatch = message.match(/Requested\s+(\d+)/i);
+    const usedMatch = message.match(/Used\s+(\d+)/i);
+    const limitMatch = message.match(/Limit\s+(\d+)/i);
+    const retryAfterMatch = message.match(/try again in\s+([\d.]+)s/i);
+
+    if (!requestedMatch && !usedMatch && !limitMatch && !retryAfterMatch) {
+      return null;
+    }
+
+    return {
+      providerRequestedTokens: requestedMatch ? Number(requestedMatch[1]) : null,
+      providerUsedTokens: usedMatch ? Number(usedMatch[1]) : null,
+      providerTokenLimit: limitMatch ? Number(limitMatch[1]) : null,
+      retryAfterSeconds: retryAfterMatch ? Number(retryAfterMatch[1]) : null
     };
   }
 

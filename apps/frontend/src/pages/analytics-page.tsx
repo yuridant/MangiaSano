@@ -11,6 +11,46 @@ type RecipeResolutionBreakdown = NonNullable<
   NonNullable<AnalyticsSummary["aiUsage"]["recentRequests"][number]["responseBreakdown"]>["recipeResolution"]
 >;
 
+function formatInputTokenCell(request: AnalyticsSummary["aiUsage"]["recentRequests"][number]) {
+  if (request.inputTokens > 0) {
+    return (
+      <>
+        {request.inputTokens}
+        {request.cachedInputTokens > 0 && (
+          <span className="ml-1 text-xs text-slate-400">
+            ({request.cachedInputTokens} cached)
+          </span>
+        )}
+      </>
+    );
+  }
+
+  if (request.providerRequestedTokens > 0) {
+    return (
+      <div>
+        <p>{request.providerRequestedTokens}</p>
+        <p className="text-xs text-slate-400">richiesti da OpenAI</p>
+      </div>
+    );
+  }
+
+  if (request.estimatedPromptTokens > 0) {
+    return (
+      <div>
+        <p>~{request.estimatedPromptTokens}</p>
+        <p className="text-xs text-slate-400">stima prompt</p>
+      </div>
+    );
+  }
+
+  return "0";
+}
+
+function formatOutputTokenCell(request: AnalyticsSummary["aiUsage"]["recentRequests"][number]) {
+  if (request.outputTokens > 0) return String(request.outputTokens);
+  return request.success ? "0" : "—";
+}
+
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T00:00:00`);
   const end = new Date(start.getTime() + 6 * 86400000);
@@ -606,14 +646,9 @@ export function AnalyticsPage() {
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-600">
-                        {request.inputTokens}
-                        {request.cachedInputTokens > 0 && (
-                          <span className="ml-1 text-xs text-slate-400">
-                            ({request.cachedInputTokens} cached)
-                          </span>
-                        )}
+                        {formatInputTokenCell(request)}
                       </td>
-                      <td className="px-3 py-3 text-slate-600">{request.outputTokens}</td>
+                      <td className="px-3 py-3 text-slate-600">{formatOutputTokenCell(request)}</td>
                       <td className="px-3 py-3 font-medium text-ink">
                         {request.success ? formatUsd(request.estimatedTotalCostUsd) : "Errore"}
                       </td>

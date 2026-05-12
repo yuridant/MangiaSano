@@ -244,6 +244,8 @@ export interface AnalyticsSummary {
       cachedInputTokens: number;
       outputTokens: number;
       totalTokens: number;
+      estimatedPromptTokens: number;
+      providerRequestedTokens: number;
       estimatedTotalCostUsd: number;
       latencyMs: number;
       correctionAttempts: number;
@@ -256,10 +258,24 @@ export interface AnalyticsSummary {
           createdNewRecipes: number;
           absorbedDuplicateRecipes: number;
         };
+        promptEstimate?: {
+          inputTokens?: number;
+        };
+        failure?: {
+          type?: string;
+          providerRequestedTokens?: number;
+          providerUsedTokens?: number;
+          providerTokenLimit?: number;
+          retryAfterSeconds?: number;
+        };
       } | null;
       requestBreakdown: {
         counts?: {
           recipesByMealType?: Partial<Record<MealSlot, number>>;
+        };
+        totals?: {
+          tokens?: number;
+          chars?: number;
         };
         contextStrategy?: {
           recipeLimit: number;
