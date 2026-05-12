@@ -11,10 +11,12 @@ import type {
   AiGenerateResult,
   AiGenerationStartResponse,
   AiGenerationStatusResponse,
+  AiMealItem,
   AiMealPlan,
   AiResponse,
   FamilyDetail,
   MealSlot,
+  Recipe,
   MenuMeal,
   WeeklyMenu
 } from "../types";
@@ -34,6 +36,30 @@ function sortMealPlans(meals: AiMealPlan[]) {
     if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
     return MEAL_SLOT_ORDER[a.mealSlot] - MEAL_SLOT_ORDER[b.mealSlot];
   });
+}
+
+type EditablePreviewMealItem = {
+  id: string;
+  mode: "recipe" | "custom";
+  recipeId: string;
+  customName: string;
+};
+
+function createEmptyPreviewMealItem(mode: EditablePreviewMealItem["mode"] = "recipe"): EditablePreviewMealItem {
+  return {
+    id: crypto.randomUUID(),
+    mode,
+    recipeId: "",
+    customName: ""
+  };
+}
+
+function mergeMealPlans(base: AiMealPlan[], patch: AiMealPlan[]) {
+  const bySlot = new Map(base.map((meal) => [`${meal.dayOfWeek}-${meal.mealSlot}`, meal] as const));
+  for (const meal of patch) {
+    bySlot.set(`${meal.dayOfWeek}-${meal.mealSlot}`, meal);
+  }
+  return sortMealPlans([...bySlot.values()]);
 }
 
 function describeMeal(meal: MenuMeal) {
@@ -69,6 +95,14 @@ export function GeneratePage() {
   const [submittedFeedback, setSubmittedFeedback] = useState<AiFeedbackRating | null>(null);
   const [validationIssues, setValidationIssues] = useState<AiGenerateResult["validationIssues"]>([]);
   const [generationStatus, setGenerationStatus] = useState<AiGenerationStatusResponse | null>(null);
+  const [generationFlow, setGenerationFlow] = useState<"initial" | "review" | null>(null);
+  const [reviewSelectionMode, setReviewSelectionMode] = useState(false);
+  const [selectedReviewSlots, setSelectedReviewSlots] = useState<string[]>([]);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewDayOfWeek, setPreviewDayOfWeek] = useState(0);
+  const [previewMealSlot, setPreviewMealSlot] = useState<MealSlot>("lunch");
+  const [previewMealItems, setPreviewMealItems] = useState<EditablePreviewMealItem[]>([createEmptyPreviewMealItem()]);
+  const [previewEditError, setPreviewEditError] = useState("");
 
   const requestedWeekStart = searchParams.get("weekStart");
   const parsedWeekStart =
@@ -87,6 +121,11 @@ export function GeneratePage() {
     queryFn: () => api.get<WeeklyMenu | null>(`/menus/${weekStart}?familyId=${activeFamilyId}`, token!),
     enabled: !!token && !!activeFamilyId
   });
+  const recipesQuery = useQuery({
+    queryKey: ["recipes", activeFamilyId],
+    queryFn: () => api.get<Recipe[]>(`/recipes?familyId=${activeFamilyId}`, token!),
+    enabled: !!token && !!activeFamilyId
+  });
 
   useEffect(() => {
     setAiResult(null);
@@ -100,6 +139,12 @@ export function GeneratePage() {
     setSubmittedFeedback(null);
     setValidationIssues([]);
     setGenerationStatus(null);
+    setGenerationFlow(null);
+    setReviewSelectionMode(false);
+    setSelectedReviewSlots([]);
+    setPreviewModalOpen(false);
+    setPreviewMealItems([createEmptyPreviewMealItem()]);
+    setPreviewEditError("");
   }, [weekStart]);
 
   const toggleSlot = (dayOfWeek: number, mealSlot: MealSlot) => {
@@ -169,11 +214,23 @@ export function GeneratePage() {
 
   const startGeneration = () => {
     setError("");
+    setGenerationFlow("initial");
     if (overlappingMeals.length > 0) {
       setOverwriteWarningOpen(true);
       return;
     }
     generateMutation.mutate();
+  };
+
+  const toggleReviewSelectionMode = () => {
+    setReviewSelectionMode((current) => !current);
+    setSelectedReviewSlots([]);
+  };
+
+  const toggleReviewSlot = (slotKey: string) => {
+    setSelectedReviewSlots((prev) =>
+      prev.includes(slotKey) ? prev.filter((key) => key !== slotKey) : [...prev, slotKey]
+    );
   };
 
   const generateMutation = useMutation({
@@ -213,6 +270,45 @@ export function GeneratePage() {
     }
   });
 
+  const reviewMutation = useMutation({
+    mutationFn: () =>
+      api.post<AiGenerationStartResponse>(
+        `/ai/generate?familyId=${activeFamilyId}`,
+        {
+          weekStart,
+          slots: selectedReviewSlots.map((slotKey) => {
+            const [dayOfWeek, mealSlot] = slotKey.split("-");
+            return {
+              dayOfWeek: Number(dayOfWeek),
+              mealSlot: mealSlot as MealSlot
+            };
+          }),
+          goal
+        },
+        token!
+      ),
+    onSuccess: (data) => {
+      setGenerationFlow("review");
+      setGenerationStatus({
+        generationId: data.generationId,
+        model: "",
+        status: data.status,
+        phase: "queued",
+        message: data.message,
+        errorMessage: null,
+        result: null,
+        correctionSummary: null,
+        validationIssues: [],
+        experimentVariant: "primary",
+        experimentStrategy: "off"
+      });
+      setError("");
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Errore durante la revisione AI");
+    }
+  });
+
   const generationStatusQuery = useQuery({
     queryKey: ["ai-generation-status", activeFamilyId, generationStatus?.generationId],
     queryFn: () =>
@@ -220,7 +316,7 @@ export function GeneratePage() {
         `/ai/generate/${generationStatus?.generationId}?familyId=${activeFamilyId}`,
         token!
       ),
-    enabled: !!token && !!activeFamilyId && !!generationStatus?.generationId && step === "select",
+    enabled: !!token && !!activeFamilyId && !!generationStatus?.generationId,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 1200;
@@ -234,7 +330,7 @@ export function GeneratePage() {
 
     setGenerationStatus(data);
 
-    if (data.status === "completed" && data.result && data.correctionSummary) {
+    if (data.status === "completed" && data.result && data.correctionSummary && generationFlow === "initial") {
       setAiResult(data.result);
       setGenerationMeta({
         generationId: data.generationId,
@@ -249,13 +345,49 @@ export function GeneratePage() {
       setSubmittedFeedback(null);
       setStep("preview");
       setError("");
+      setGenerationStatus(null);
+      setGenerationFlow(null);
+    }
+
+    if (data.status === "completed" && data.result && data.correctionSummary && generationFlow === "review") {
+      const revisedSlots = new Set(selectedReviewSlots);
+      const mergedPlan = mergeMealPlans(planToSave, data.result.weeklyPlan);
+      setPlanToSave(mergedPlan);
+      setAiResult((current) =>
+        current
+          ? {
+              ...current,
+              weeklyPlan: mergedPlan
+            }
+          : data.result
+      );
+      setValidationIssues((current) => [
+        ...current.filter((issue) => {
+          if (issue.dayOfWeek === undefined || issue.mealSlot === undefined) return true;
+          return !revisedSlots.has(getSlotKey(issue.dayOfWeek, issue.mealSlot));
+        }),
+        ...data.validationIssues
+      ]);
+      setGenerationMeta({
+        generationId: data.generationId,
+        model: data.model,
+        experimentVariant: data.experimentVariant,
+        experimentStrategy: data.experimentStrategy,
+        correctionSummary: data.correctionSummary
+      });
+      setReviewSelectionMode(false);
+      setSelectedReviewSlots([]);
+      setError("");
+      setGenerationStatus(null);
+      setGenerationFlow(null);
     }
 
     if (data.status === "failed") {
       setError(data.errorMessage || data.message || "Errore durante la generazione");
       setGenerationStatus(null);
+      setGenerationFlow(null);
     }
-  }, [generationStatusQuery.data]);
+  }, [generationStatusQuery.data, generationFlow, planToSave, selectedReviewSlots]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -325,6 +457,11 @@ export function GeneratePage() {
         : null
     }))
   }));
+  const previewMealBySlot = new Map(previewMeals.map((meal) => [getSlotKey(meal.dayOfWeek, meal.mealSlot), meal] as const));
+  const previewSelectedSlotSet = new Set(selectedReviewSlots);
+  const allPreviewSlotKeys = previewMeals.map((meal) => getSlotKey(meal.dayOfWeek, meal.mealSlot));
+  const areAllPreviewSlotsSelected =
+    allPreviewSlotKeys.length > 0 && allPreviewSlotKeys.every((slotKey) => selectedReviewSlots.includes(slotKey));
   const flaggedSlots = new Map<string, string[]>();
   for (const issue of validationIssues) {
     if (issue.dayOfWeek === undefined || issue.mealSlot === undefined) continue;
@@ -333,6 +470,76 @@ export function GeneratePage() {
     current.push(issue.message);
     flaggedSlots.set(key, current);
   }
+
+  const openPreviewMealModal = (meal: MenuMeal) => {
+    setPreviewDayOfWeek(meal.dayOfWeek);
+    setPreviewMealSlot(meal.mealSlot);
+    setPreviewMealItems(
+      meal.items.length > 0
+        ? meal.items.map((item) => ({
+            id: item.id,
+            mode: item.recipeId && item.recipe ? "recipe" : "custom",
+            recipeId: item.recipeId ?? "",
+            customName: item.recipe?.name ?? item.customName ?? ""
+          }))
+        : [createEmptyPreviewMealItem()]
+    );
+    setPreviewEditError("");
+    setPreviewModalOpen(true);
+  };
+
+  const savePreviewMealChanges = () => {
+    const recipeOptions = recipesQuery.data ?? [];
+    const nextItems: AiMealItem[] = previewMealItems.map((item, index) => {
+      if (item.mode === "recipe") {
+        if (!item.recipeId) {
+          throw new Error(`Seleziona una ricetta per la componente ${index + 1}.`);
+        }
+        const recipe = recipeOptions.find((entry) => entry.id === item.recipeId);
+        if (!recipe) {
+          throw new Error(`La ricetta selezionata per la componente ${index + 1} non è disponibile.`);
+        }
+        return {
+          recipeId: recipe.id,
+          recipeName: recipe.name,
+          recipeDescription: recipe.description ?? undefined
+        };
+      }
+
+      if (!item.customName.trim()) {
+        throw new Error(`Inserisci un nome per la componente ${index + 1}.`);
+      }
+
+      return {
+        recipeName: item.customName.trim()
+      };
+    });
+
+    const updatedPlan = mergeMealPlans(planToSave, [
+      {
+        dayOfWeek: previewDayOfWeek,
+        mealSlot: previewMealSlot,
+        items: nextItems
+      }
+    ]);
+    setPlanToSave(updatedPlan);
+    setAiResult((current) =>
+      current
+        ? {
+            ...current,
+            weeklyPlan: updatedPlan
+          }
+        : current
+    );
+    setValidationIssues((current) =>
+      current.filter(
+        (issue) =>
+          issue.dayOfWeek !== previewDayOfWeek || issue.mealSlot !== previewMealSlot
+      )
+    );
+    setPreviewModalOpen(false);
+    setPreviewEditError("");
+  };
 
   if (step === "preview" && aiResult) {
     return (
@@ -350,19 +557,79 @@ export function GeneratePage() {
               <h3 className="text-sm font-bold text-ink">Anteprima settimanale AI</h3>
               <p className="mt-1 text-xs text-slate-500">{formatWeekRange(weekStart)}</p>
             </div>
-            {generationMeta && (
-              <div className="rounded-2xl bg-slate-50 px-3 py-2 text-right">
-                <p className="text-[11px] uppercase tracking-wider text-slate-400">
-                  {generationMeta.experimentStrategy === "off"
-                    ? "Modello"
-                    : `Gruppo ${generationMeta.experimentVariant === "secondary" ? "B" : "A"}`}
-                </p>
-                <p className="text-sm font-semibold text-ink">{generationMeta.model}</p>
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {reviewSelectionMode && planToSave.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReviewSlots(areAllPreviewSlotsSelected ? [] : allPreviewSlotKeys)}
+                    className="app-btn-xs app-btn-secondary"
+                  >
+                    {areAllPreviewSlotsSelected ? "Deseleziona tutti" : "Seleziona tutti"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => reviewMutation.mutate()}
+                    disabled={selectedReviewSlots.length === 0 || !!generationStatus || reviewMutation.isPending}
+                    className="app-btn-xs app-btn-sage disabled:opacity-60"
+                  >
+                    {reviewMutation.isPending || generationFlow === "review"
+                      ? "Revisione..."
+                      : `Rivedi con AI (${selectedReviewSlots.length})`}
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={toggleReviewSelectionMode}
+                className={`app-btn-xs ${reviewSelectionMode ? "app-btn-sage" : "app-btn-secondary"}`}
+              >
+                {reviewSelectionMode ? "Fine selezione" : "Seleziona pasti"}
+              </button>
+              {generationMeta && (
+                <div className="rounded-2xl bg-slate-50 px-3 py-2 text-right">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">
+                    {generationMeta.experimentStrategy === "off"
+                      ? "Modello"
+                      : `Gruppo ${generationMeta.experimentVariant === "secondary" ? "B" : "A"}`}
+                  </p>
+                  <p className="text-sm font-semibold text-ink">{generationMeta.model}</p>
+                </div>
+              )}
+            </div>
           </div>
-          <WeekGrid meals={previewMeals} weekStart={weekStart} flaggedSlots={flaggedSlots} />
+          <WeekGrid
+            meals={previewMeals}
+            weekStart={weekStart}
+            flaggedSlots={flaggedSlots}
+            selectedSlots={reviewSelectionMode ? previewSelectedSlotSet : undefined}
+            onCellClick={(dayOfWeek, mealSlot, meal) => {
+              const slotKey = getSlotKey(dayOfWeek, mealSlot);
+              if (reviewSelectionMode) {
+                if (previewMealBySlot.has(slotKey)) {
+                  toggleReviewSlot(slotKey);
+                }
+                return;
+              }
+              if (meal) {
+                openPreviewMealModal(meal);
+              }
+            }}
+          />
         </div>
+
+        {(generationFlow === "review" || generationStatus) && (
+          <div className="rounded-2xl bg-sky-50 px-4 py-4 text-sm text-sky-900">
+            <p className="font-semibold">
+              {generationStatus?.message ?? "Sto rivedendo i pasti selezionati con l'AI."}
+            </p>
+            <p className="mt-1 text-sky-800">
+              {generationStatus?.phase
+                ? `Fase attuale: ${formatGenerationPhase(generationStatus.phase)}.`
+                : "La revisione aggiornerà solo i pasti selezionati, mantenendo il resto della settimana."}
+            </p>
+          </div>
+        )}
 
         {generationMeta?.correctionSummary.corrected && (
           <div
@@ -478,6 +745,9 @@ export function GeneratePage() {
               setSelectedFeedback(null);
               setSubmittedFeedback(null);
               setGenerationStatus(null);
+              setGenerationFlow(null);
+              setReviewSelectionMode(false);
+              setSelectedReviewSlots([]);
             }}
             className="app-btn app-btn-secondary flex-1"
             type="button"
@@ -497,6 +767,167 @@ export function GeneratePage() {
             {saveMutation.isPending ? "Salvataggio..." : "Salva menu"}
           </button>
         </div>
+
+        {previewModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6">
+            <div className="w-full max-w-2xl rounded-[30px] bg-[#fffdf8] p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+                    Proposta AI
+                  </p>
+                  <h2 className="mt-2 text-xl font-bold text-ink">
+                    {DAYS_FULL[previewDayOfWeek]} · {SLOT_LABELS[previewMealSlot]}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewModalOpen(false);
+                    setPreviewEditError("");
+                  }}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-500 hover:bg-slate-200 hover:text-ink"
+                >
+                  Chiudi
+                </button>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMealItems((prev) => [...prev, createEmptyPreviewMealItem("recipe")])}
+                  className="app-btn-xs app-btn-secondary"
+                >
+                  + Ricetta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMealItems((prev) => [...prev, createEmptyPreviewMealItem("custom")])}
+                  className="app-btn-xs app-btn-secondary"
+                >
+                  + Voce manuale
+                </button>
+              </div>
+
+              <div className="mt-5 flex max-h-[50vh] flex-col gap-4 overflow-y-auto pr-1">
+                {previewMealItems.map((item, index) => (
+                  <div key={item.id} className="rounded-3xl border border-slate-200 bg-white/70 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-sm font-semibold text-ink">Componente {index + 1}</p>
+                      {previewMealItems.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewMealItems((prev) => prev.filter((entry) => entry.id !== item.id))
+                          }
+                          className="text-xs font-semibold text-rose-500 hover:text-rose-600"
+                        >
+                          Rimuovi
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewMealItems((prev) =>
+                            prev.map((entry) =>
+                              entry.id === item.id ? { ...entry, mode: "recipe", customName: "" } : entry
+                            )
+                          )
+                        }
+                        className={`app-btn-xs ${item.mode === "recipe" ? "app-btn-sage" : "app-btn-secondary"}`}
+                      >
+                        Ricetta esistente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewMealItems((prev) =>
+                            prev.map((entry) =>
+                              entry.id === item.id ? { ...entry, mode: "custom", recipeId: "" } : entry
+                            )
+                          )
+                        }
+                        className={`app-btn-xs ${item.mode === "custom" ? "app-btn-sage" : "app-btn-secondary"}`}
+                      >
+                        Voce manuale
+                      </button>
+                    </div>
+
+                    {item.mode === "recipe" ? (
+                      <select
+                        value={item.recipeId}
+                        onChange={(e) =>
+                          setPreviewMealItems((prev) =>
+                            prev.map((entry) =>
+                              entry.id === item.id ? { ...entry, recipeId: e.target.value } : entry
+                            )
+                          )
+                        }
+                        className="mt-3 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                      >
+                        <option value="">Seleziona una ricetta</option>
+                        {(recipesQuery.data ?? []).map((recipe) => (
+                          <option key={recipe.id} value={recipe.id}>
+                            {recipe.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={item.customName}
+                        onChange={(e) =>
+                          setPreviewMealItems((prev) =>
+                            prev.map((entry) =>
+                              entry.id === item.id ? { ...entry, customName: e.target.value } : entry
+                            )
+                          )
+                        }
+                        placeholder="Nome componente"
+                        className="mt-3 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm focus:border-sage focus:outline-none"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {previewEditError && (
+                <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{previewEditError}</p>
+              )}
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewModalOpen(false);
+                    setPreviewEditError("");
+                  }}
+                  className="app-btn app-btn-secondary flex-1"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      savePreviewMealChanges();
+                    } catch (error) {
+                      setPreviewEditError(
+                        error instanceof Error ? error.message : "Errore durante l'aggiornamento del pasto."
+                      );
+                    }
+                  }}
+                  className="app-btn app-btn-sage flex-1"
+                >
+                  Salva modifiche
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -717,14 +1148,15 @@ export function GeneratePage() {
               >
                 Annulla
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOverwriteWarningOpen(false);
-                  generateMutation.mutate();
-                }}
-                className="app-btn app-btn-sage flex-1"
-              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOverwriteWarningOpen(false);
+                    setGenerationFlow("initial");
+                    generateMutation.mutate();
+                  }}
+                  className="app-btn app-btn-sage flex-1"
+                >
                 Conferma e genera
               </button>
             </div>
