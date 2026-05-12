@@ -111,6 +111,19 @@ interface RequestBreakdown {
   };
 }
 
+interface PromptContextRecipe {
+  id: string;
+  name: string;
+  description?: string | null;
+  mealTypes: MealSlot[];
+  ingredients?: string[];
+}
+
+interface PromptContextIngredient {
+  name: string;
+  category?: string | null;
+}
+
 type OpenAiExperimentMode = "off" | "alternate" | "random";
 
 interface UsageTotals {
@@ -158,6 +171,7 @@ interface ModelSelection {
 }
 
 const MAX_AI_CORRECTION_ATTEMPTS = 3;
+const MAX_PROMPT_INPUT_TOKENS = 18000;
 
 const SYSTEM_PROMPT = `Sei un nutrizionista esperto. Il tuo obiettivo è creare piani alimentari settimanali equilibrati che riducano al minimo i picchi glicemici.
 
@@ -213,26 +227,6 @@ export class AiService {
     ]);
     const model = modelSelection.model;
 
-    const context = {
-      existingRecipes: [...recipes]
-        .sort((a, b) => a.name.localeCompare(b.name, "it"))
-        .map((recipe) => ({
-        id: recipe.id,
-        name: recipe.name,
-        description: recipe.description,
-        mealTypes: recipe.mealTypes,
-        ingredients: [...recipe.ingredients]
-          .map((recipeIngredient) => recipeIngredient.ingredient.name)
-          .sort((a, b) => a.localeCompare(b, "it"))
-      })),
-      existingIngredients: [...ingredients]
-        .sort((a, b) => a.name.localeCompare(b.name, "it"))
-        .map((ingredient) => ({
-        id: ingredient.id,
-        name: ingredient.name,
-        category: ingredient.category
-      }))
-    };
     const dietaryProfile = {
       familyName: family.name,
       allergies: family.allergyNotes,
@@ -246,31 +240,19 @@ export class AiService {
       .map((slot) => `${dayNames[slot.dayOfWeek]} - ${MEAL_SLOT_LABELS[slot.mealSlot]}`)
       .join(", ");
 
-    const promptSections = {
-      goal: `Obiettivo nutrizionale: ${goal}`,
-      existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id e rispettando SEMPRE i loro mealTypes quando presenti):\n${JSON.stringify(context.existingRecipes)}`,
-      existingIngredients: `Ingredienti già presenti nell'app:\n${JSON.stringify(context.existingIngredients)}`,
-      dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(dietaryProfile)}`,
-      requestedSlots: `Genera un piano per questi slot: ${slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(slots)}`,
-      rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
-Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
-Ogni slot di weeklyPlan deve avere un array items con una o più componenti del pasto.
-Ogni item deve avere recipeName; recipeId va compilato solo se corrisponde a una ricetta esistente in existingRecipes.
-Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes e non assegnarla mai a uno slot incompatibile con i suoi mealTypes.
-Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
-Per ogni nuova ricetta compila mealTypes in modo coerente con gli slot in cui la usi.
-Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
-Quando un item contiene proteine valorizza anche proteinSource scegliendo tra meat, fish, legume, egg, dairy, plant_based, other.
-Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure più componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
-Varia molto le fonti proteiche nell'arco della settimana.
-Evita la carne in più di 3 pasti principali a settimana.
-Distribuisci gli eventuali pasti con carne lungo la settimana, evitando pasti con carne troppo ravvicinati e soprattutto evitando di concentrare la carne in giorni consecutivi o nello stesso giorno quando esistono alternative valide.
-Non fondere artificialmente ricette diverse in una sola ricetta se nella realtà sono due portate separate dello stesso pasto.
-Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
-Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
-Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
-Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`
-    };
+    const compactContext = this.buildCompactPromptContext(model, recipes, ingredients, slots, {
+      goal,
+      dietaryProfile,
+      slotsDescription
+    });
+    const promptSections = this.buildPromptSections({
+      goal,
+      existingRecipes: compactContext.existingRecipes,
+      existingIngredients: compactContext.existingIngredients,
+      dietaryProfile,
+      slotsDescription,
+      slots
+    });
     const userMessage = [
       promptSections.goal,
       promptSections.existingRecipes,
@@ -284,8 +266,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
       ...promptSections
     }, {
       requestedMeals: slots.length,
-      existingRecipes: context.existingRecipes.length,
-      existingIngredients: context.existingIngredients.length
+      existingRecipes: compactContext.existingRecipes.length,
+      existingIngredients: compactContext.existingIngredients.length
     });
 
     try {
@@ -318,8 +300,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
         requestedMealCount: slots.length,
-        existingRecipeCount: context.existingRecipes.length,
-        existingIngredientCount: context.existingIngredients.length,
+        existingRecipeCount: compactContext.existingRecipes.length,
+        existingIngredientCount: compactContext.existingIngredients.length,
         requestBreakdown,
         responseBreakdown: {
           weeklyPlanCount: validation.result.weeklyPlan.length,
@@ -359,8 +341,8 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
         strategy: modelSelection.strategy,
         variant: modelSelection.variant,
         requestedMealCount: slots.length,
-        existingRecipeCount: context.existingRecipes.length,
-        existingIngredientCount: context.existingIngredients.length,
+        existingRecipeCount: compactContext.existingRecipes.length,
+        existingIngredientCount: compactContext.existingIngredients.length,
         requestBreakdown,
         success: false,
         latencyMs: Date.now() - startedAt,
@@ -376,6 +358,13 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
 
       if (error instanceof OpenAI.RateLimitError) {
         const requestId = error.request_id ? ` Request ID OpenAI: ${error.request_id}.` : "";
+        const isRequestTooLarge = error.message.toLowerCase().includes("request too large");
+        if (isRequestTooLarge) {
+          throw new HttpException(
+            `La richiesta AI è troppo grande per il limite token del modello. Abbiamo già ridotto automaticamente il contesto, ma per questo tentativo serve ridurre ancora il volume di dati o gli slot richiesti.${requestId}`,
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
         throw new HttpException(
           `OpenAI ha rifiutato la richiesta per quota o rate limit: ${error.message}.${requestId}`,
           HttpStatus.TOO_MANY_REQUESTS
@@ -866,6 +855,143 @@ Prima di rispondere, verifica internamente che il piano copra tutti gli slot ric
     } catch {
       return encodingForModel("gpt-4o");
     }
+  }
+
+  private buildCompactPromptContext(
+    model: string,
+    recipes: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      mealTypes: MealSlot[];
+      updatedAt: Date;
+      ingredients: { ingredient: { name: string } }[];
+    }>,
+    ingredients: Array<{ name: string; category: string | null }>,
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[],
+    meta: {
+      goal: string;
+      dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+      slotsDescription: string;
+    }
+  ) {
+    const requestedMealTypes = new Set(slots.map((slot) => slot.mealSlot));
+    const rankedRecipes = [...recipes]
+      .filter((recipe) => recipe.mealTypes.length === 0 || recipe.mealTypes.some((type) => requestedMealTypes.has(type)))
+      .sort((a, b) => {
+        const aMatches = a.mealTypes.filter((type) => requestedMealTypes.has(type)).length;
+        const bMatches = b.mealTypes.filter((type) => requestedMealTypes.has(type)).length;
+        if (aMatches !== bMatches) return bMatches - aMatches;
+        return b.updatedAt.getTime() - a.updatedAt.getTime();
+      });
+    const fallbackRecipes = [...recipes]
+      .filter((recipe) => !rankedRecipes.some((candidate) => candidate.id === recipe.id))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const orderedRecipes = [...rankedRecipes, ...fallbackRecipes];
+    const sortedIngredients = [...ingredients].sort((a, b) => a.name.localeCompare(b.name, "it"));
+
+    const strategies: Array<{
+      recipeLimit: number;
+      ingredientLimit: number;
+      includeDescription: boolean;
+      ingredientNamesPerRecipe: number;
+    }> = [
+      { recipeLimit: 160, ingredientLimit: 250, includeDescription: false, ingredientNamesPerRecipe: 5 },
+      { recipeLimit: 120, ingredientLimit: 180, includeDescription: false, ingredientNamesPerRecipe: 4 },
+      { recipeLimit: 80, ingredientLimit: 120, includeDescription: false, ingredientNamesPerRecipe: 3 },
+      { recipeLimit: 50, ingredientLimit: 80, includeDescription: false, ingredientNamesPerRecipe: 2 },
+      { recipeLimit: 30, ingredientLimit: 50, includeDescription: false, ingredientNamesPerRecipe: 0 }
+    ];
+
+    let chosenContext = {
+      existingRecipes: [] as PromptContextRecipe[],
+      existingIngredients: [] as PromptContextIngredient[]
+    };
+
+    for (const strategy of strategies) {
+      const candidateContext = {
+        existingRecipes: orderedRecipes.slice(0, strategy.recipeLimit).map((recipe) => {
+          const compactRecipe: PromptContextRecipe = {
+            id: recipe.id,
+            name: recipe.name,
+            mealTypes: recipe.mealTypes
+          };
+          if (strategy.includeDescription && recipe.description) {
+            compactRecipe.description = recipe.description;
+          }
+          if (strategy.ingredientNamesPerRecipe > 0) {
+            compactRecipe.ingredients = [...recipe.ingredients]
+              .map((recipeIngredient) => recipeIngredient.ingredient.name)
+              .sort((a, b) => a.localeCompare(b, "it"))
+              .slice(0, strategy.ingredientNamesPerRecipe);
+          }
+          return compactRecipe;
+        }),
+        existingIngredients: sortedIngredients.slice(0, strategy.ingredientLimit).map((ingredient) => ({
+          name: ingredient.name,
+          category: ingredient.category
+        }))
+      };
+
+      const candidateSections = this.buildPromptSections({
+        goal: meta.goal,
+        existingRecipes: candidateContext.existingRecipes,
+        existingIngredients: candidateContext.existingIngredients,
+        dietaryProfile: meta.dietaryProfile,
+        slotsDescription: meta.slotsDescription,
+        slots
+      });
+      const candidateBreakdown = this.buildRequestBreakdown(model, {
+        systemPrompt: SYSTEM_PROMPT,
+        ...candidateSections
+      }, {
+        requestedMeals: slots.length,
+        existingRecipes: candidateContext.existingRecipes.length,
+        existingIngredients: candidateContext.existingIngredients.length
+      });
+
+      chosenContext = candidateContext;
+      if (candidateBreakdown.totals.tokens <= MAX_PROMPT_INPUT_TOKENS) {
+        break;
+      }
+    }
+
+    return chosenContext;
+  }
+
+  private buildPromptSections(params: {
+    goal: string;
+    existingRecipes: PromptContextRecipe[];
+    existingIngredients: PromptContextIngredient[];
+    dietaryProfile: { familyName: string; allergies: string | null; intolerances: string | null; preferences: string | null };
+    slotsDescription: string;
+    slots: { dayOfWeek: number; mealSlot: MealSlot }[];
+  }) {
+    return {
+      goal: `Obiettivo nutrizionale: ${params.goal}`,
+      existingRecipes: `Ricette già presenti nell'app (usa queste quando possibile, riportando il loro id e rispettando SEMPRE i loro mealTypes quando presenti):\n${JSON.stringify(params.existingRecipes)}`,
+      existingIngredients: `Ingredienti già presenti nell'app:\n${JSON.stringify(params.existingIngredients)}`,
+      dietaryProfile: `Profilo alimentare della famiglia da rispettare SEMPRE:\n${JSON.stringify(params.dietaryProfile)}`,
+      requestedSlots: `Genera un piano per questi slot: ${params.slotsDescription}\nSlot richiesti in formato strutturato:\n${JSON.stringify(params.slots)}`,
+      rules: `Includi in newRecipes solo le ricette che non esistono già. Includi in newIngredients solo gli ingredienti non già presenti.
+Ogni elemento di weeklyPlan deve corrispondere a uno e un solo slot richiesto, senza duplicati e senza slot extra.
+Ogni slot di weeklyPlan deve avere un array items con una o più componenti del pasto.
+Ogni item deve avere recipeName; recipeId va compilato solo se corrisponde a una ricetta esistente in existingRecipes.
+Se usi una ricetta esistente compila recipeId con un id presente in existingRecipes e non assegnarla mai a uno slot incompatibile con i suoi mealTypes.
+Se proponi una ricetta nuova lascia recipeId assente e inseriscila anche in newRecipes con lo stesso recipeName.
+Per ogni nuova ricetta compila mealTypes in modo coerente con gli slot in cui la usi.
+Per ogni item valorizza nutritionTags scegliendo tra carb, protein, fat, vegetable quando applicabile.
+Quando un item contiene proteine valorizza anche proteinSource scegliendo tra meat, fish, legume, egg, dairy, plant_based, other.
+Per pranzi e cene ogni slot deve essere nutrizionalmente completo: o un piatto unico bilanciato che copre carboidrati, proteine e grassi buoni, oppure più componenti separate che nel complesso coprono carboidrati, proteine e grassi buoni. Le verdure sono fortemente raccomandate.
+Varia molto le fonti proteiche nell'arco della settimana.
+Evita la carne in più di 3 pasti principali a settimana.
+Distribuisci gli eventuali pasti con carne lungo la settimana, evitando pasti con carne troppo ravvicinati e soprattutto evitando di concentrare la carne in giorni consecutivi o nello stesso giorno quando esistono alternative valide.
+Non fondere artificialmente ricette diverse in una sola ricetta se nella realtà sono due portate separate dello stesso pasto.
+Gli spuntini mattutini e pomeridiani devono essere davvero spuntini leggeri, veloci e plausibili: frutta, yogurt, frutta secca, smoothie, cracker, hummus, piccoli snack simili.
+Non proporre ingredienti o ricette in conflitto con allergie, intolleranze o preferenze indicate.
+Descrivi ingredienti e ricette nuove in modo realistico e riutilizzabile nell'app.
+Prima di rispondere, verifica internamente che il piano copra tutti gli slot richiesti.`
+    };
   }
 
   private async logGeneration(params: {
