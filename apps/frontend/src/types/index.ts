@@ -250,7 +250,17 @@ export interface AnalyticsSummary {
       correctionEstimatedCostUsd: number;
       feedbackRating: AiFeedbackRating | null;
       savedToMenu: boolean;
-      requestBreakdown: unknown;
+      requestBreakdown: {
+        counts?: {
+          recipesByMealType?: Partial<Record<MealSlot, number>>;
+        };
+        contextStrategy?: {
+          recipeLimit: number;
+          ingredientLimit: number;
+          includeDescription: boolean;
+          ingredientNamesPerRecipe: number;
+        };
+      } | null;
       errorMessage: string | null;
     }[];
   };
