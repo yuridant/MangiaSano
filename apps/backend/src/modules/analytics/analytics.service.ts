@@ -371,6 +371,14 @@ export class AnalyticsService {
           ((log.responseBreakdown as { correctionUsage?: { estimatedTotalCostUsd?: number } } | null)?.correctionUsage?.estimatedTotalCostUsd ?? 0),
         feedbackRating: log.feedbackRating,
         savedToMenu: Boolean(log.savedToMenuAt),
+        responseBreakdown:
+          (log.responseBreakdown as {
+            recipeResolution?: {
+              reusedExistingRecipes?: number;
+              createdNewRecipes?: number;
+              absorbedDuplicateRecipes?: number;
+            };
+          } | null) ?? null,
         requestBreakdown: log.requestBreakdown,
         errorMessage: log.errorMessage
       }))

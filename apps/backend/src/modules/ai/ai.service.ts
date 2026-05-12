@@ -183,6 +183,12 @@ interface AiCorrectionResolution {
   lastResponseId: string;
 }
 
+interface AiRecipeResolutionStats {
+  reusedExistingRecipes: number;
+  createdNewRecipes: number;
+  absorbedDuplicateRecipes: number;
+}
+
 interface ModelSelection {
   model: string;
   strategy: OpenAiExperimentMode;
@@ -577,6 +583,9 @@ export class AiService {
     }
 
     const savedMenu = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const reusedExistingRecipeIds = new Set<string>();
+      const createdNewRecipeIds = new Set<string>();
+      const absorbedDuplicateRecipeNames = new Set<string>();
       const ingredientIdsByName = new Map(
         [...existingIngredientsByName.entries()].map(([name, ingredient]) => [name, ingredient.id])
       );
@@ -621,6 +630,7 @@ export class AiService {
         });
 
         if (reusableRecipe) {
+          absorbedDuplicateRecipeNames.add(normalizedRecipeName);
           recipeIdsByName.set(normalizedRecipeName, reusableRecipe.id);
           continue;
         }
@@ -640,6 +650,7 @@ export class AiService {
         });
 
         recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+        createdNewRecipeIds.add(createdRecipe.id);
       }
 
       const date = this.parseWeekStart(weekStart);
@@ -667,6 +678,10 @@ export class AiService {
               ? item.recipeId
               : recipeIdsByName.get(normalizedRecipeName);
 
+          if (recipeId && existingRecipeIds.has(recipeId)) {
+            reusedExistingRecipeIds.add(recipeId);
+          }
+
           if (!recipeId) {
             const inferredMealTypes = [
               ...(inferredMealTypesByRecipeName.get(normalizedRecipeName) ?? new Set<MealSlot>([meal.mealSlot]))
@@ -684,6 +699,8 @@ export class AiService {
             if (reusableRecipe) {
               recipeId = reusableRecipe.id;
               recipeIdsByName.set(normalizedRecipeName, reusableRecipe.id);
+              absorbedDuplicateRecipeNames.add(normalizedRecipeName);
+              reusedExistingRecipeIds.add(reusableRecipe.id);
             } else {
               const createdRecipe = await tx.recipe.create({
                 data: {
@@ -697,6 +714,7 @@ export class AiService {
               });
               recipeId = createdRecipe.id;
               recipeIdsByName.set(this.normalizeRecipeName(createdRecipe.name), createdRecipe.id);
+              createdNewRecipeIds.add(createdRecipe.id);
             }
           }
 
@@ -778,19 +796,45 @@ export class AiService {
             }
           }
         }
-      });
+      }).then((menuResult) => ({
+        menu: menuResult,
+        recipeResolutionStats: {
+          reusedExistingRecipes: reusedExistingRecipeIds.size,
+          createdNewRecipes: createdNewRecipeIds.size,
+          absorbedDuplicateRecipes: absorbedDuplicateRecipeNames.size
+        }
+      }));
     });
 
     if (generationId) {
+      const generationLog = await this.prisma.aiGenerationLog.findFirst({
+        where: { id: generationId, userId, familyId },
+        select: {
+          id: true,
+          responseBreakdown: true
+        }
+      });
+
+      const existingResponseBreakdown =
+        generationLog?.responseBreakdown &&
+        typeof generationLog.responseBreakdown === "object" &&
+        !Array.isArray(generationLog.responseBreakdown)
+          ? (generationLog.responseBreakdown as Record<string, unknown>)
+          : {};
+
       await this.prisma.aiGenerationLog.updateMany({
         where: { id: generationId, userId, familyId },
         data: {
-          savedToMenuAt: new Date()
+          savedToMenuAt: new Date(),
+          responseBreakdown: {
+            ...existingResponseBreakdown,
+            recipeResolution: savedMenu.recipeResolutionStats
+          } as Prisma.InputJsonValue
         }
       });
     }
 
-    return savedMenu;
+    return savedMenu.menu;
   }
 
   async saveGenerationFeedback(

@@ -7,6 +7,9 @@ import { SLOT_LABELS } from "../types";
 type PromptContextStrategy = NonNullable<
   NonNullable<AnalyticsSummary["aiUsage"]["recentRequests"][number]["requestBreakdown"]>["contextStrategy"]
 >;
+type RecipeResolutionBreakdown = NonNullable<
+  NonNullable<AnalyticsSummary["aiUsage"]["recentRequests"][number]["responseBreakdown"]>["recipeResolution"]
+>;
 
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T00:00:00`);
@@ -79,6 +82,11 @@ function formatMealTypeMix(recipesByMealType?: Partial<Record<keyof typeof SLOT_
 function formatContextStrategy(strategy?: PromptContextStrategy) {
   if (!strategy) return "—";
   return `ricette ${strategy.recipeLimit}, ingredienti ${strategy.ingredientLimit}, ingredienti/ricetta ${strategy.ingredientNamesPerRecipe}`;
+}
+
+function formatRecipeResolution(recipeResolution?: RecipeResolutionBreakdown) {
+  if (!recipeResolution) return "—";
+  return `riuso ${recipeResolution.reusedExistingRecipes} • nuove ${recipeResolution.createdNewRecipes} • assorbite ${recipeResolution.absorbedDuplicateRecipes}`;
 }
 
 export function AnalyticsPage() {
@@ -541,6 +549,7 @@ export function AnalyticsPage() {
                     <th className="px-3 py-2 font-semibold">Feedback</th>
                     <th className="px-3 py-2 font-semibold">Correzioni</th>
                     <th className="px-3 py-2 font-semibold">Mix prompt</th>
+                    <th className="px-3 py-2 font-semibold">Esito ricette</th>
                     <th className="px-3 py-2 font-semibold">Token ingresso</th>
                     <th className="px-3 py-2 font-semibold">Token uscita</th>
                     <th className="px-3 py-2 font-semibold">Costo</th>
@@ -586,6 +595,13 @@ export function AnalyticsPage() {
                           </p>
                           <p className="mt-1 text-xs text-slate-400">
                             {formatContextStrategy(request.requestBreakdown?.contextStrategy)}
+                          </p>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        <div className="max-w-[220px]">
+                          <p className="line-clamp-2">
+                            {formatRecipeResolution(request.responseBreakdown?.recipeResolution)}
                           </p>
                         </div>
                       </td>

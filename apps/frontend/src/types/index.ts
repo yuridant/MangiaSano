@@ -250,6 +250,13 @@ export interface AnalyticsSummary {
       correctionEstimatedCostUsd: number;
       feedbackRating: AiFeedbackRating | null;
       savedToMenu: boolean;
+      responseBreakdown: {
+        recipeResolution?: {
+          reusedExistingRecipes: number;
+          createdNewRecipes: number;
+          absorbedDuplicateRecipes: number;
+        };
+      } | null;
       requestBreakdown: {
         counts?: {
           recipesByMealType?: Partial<Record<MealSlot, number>>;
